@@ -33,7 +33,7 @@ pub enum ConnectError {
     Launch(String),
 }
 
-pub fn prepare_connect(host: &Host, vault: &Vault, run_dir: &Path, prefer_v6: bool) -> Result<SshInvocation, ConnectError> {
+pub fn prepare_connect(host: &Host, vault: &Vault, run_dir: &Path, prefer_v6: bool, reg: &crate::askpass::Registry) -> Result<SshInvocation, ConnectError> {
     host.validate().map_err(|e| ConnectError::Invalid(e.to_string()))?;
     let addr = host.target(prefer_v6).ok_or(ConnectError::NoAddress)?;
     let secret = vault.get(host.auth.secret_id()).map_err(|e| match e {
@@ -41,6 +41,7 @@ pub fn prepare_connect(host: &Host, vault: &Vault, run_dir: &Path, prefer_v6: bo
         other => ConnectError::Key(other.to_string()),
     })?;
     let mut args: Vec<String> = Vec::new();
+    let mut env: Vec<(String, String)> = Vec::new();
     match host.auth {
         Auth::Key { .. } | Auth::Fido { .. } => {
             let key = materialize_key(&secret, run_dir)?;
@@ -48,11 +49,18 @@ pub fn prepare_connect(host: &Host, vault: &Vault, run_dir: &Path, prefer_v6: bo
         }
         Auth::Password { .. } => {
             args.extend(["-o".into(), "PreferredAuthentications=password,keyboard-interactive".into()]);
+            let pw = String::from_utf8(secret.material.to_vec()).map_err(|_| ConnectError::Key("password is not valid text".into()))?;
+            let token = crate::askpass::register(reg, zeroize::Zeroizing::new(pw));
+            let exe = std::env::current_exe().map_err(|e| ConnectError::Launch(e.to_string()))?;
+            env.push(("SSH_ASKPASS".into(), exe.to_string_lossy().into_owned()));
+            env.push(("SSH_ASKPASS_REQUIRE".into(), "force".into()));
+            env.push(("LZSSH_ASKPASS".into(), "1".into()));
+            env.push(("LZSSH_ASKPASS_TOKEN".into(), token));
         }
     }
     // "--" ends option parsing, so the destination can never be read as an ssh option.
     args.extend(["-p".into(), host.port.to_string(), "--".into(), format!("{}@{}", host.username.trim(), addr)]);
-    Ok(SshInvocation { program: SSH_EXE.into(), args, env: vec![] })
+    Ok(SshInvocation { program: SSH_EXE.into(), args, env })
 }
 
 /// Absolute path under `%SystemRoot%\System32`, so PATH cannot substitute a planted binary.
@@ -224,7 +232,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let s = secret(SecretKind::SshKey, b"KEYDATA\n");
         let v = vault_with(&s, d.path());
-        let inv = prepare_connect(&host(Auth::Key { secret_id: s.id }), &v, d.path(), false).unwrap();
+        let inv = prepare_connect(&host(Auth::Key { secret_id: s.id }), &v, d.path(), false, &Default::default()).unwrap();
         assert_eq!(inv.program, SSH_EXE);
         let key = d.path().join(s.id.to_string()).to_string_lossy().to_string();
         assert_eq!(inv.args, vec!["-i", key.as_str(), "-o", "IdentitiesOnly=yes", "-p", "2222", "--", "luke@10.0.0.5"]);
@@ -239,10 +247,10 @@ mod tests {
         let mut h = host(Auth::Key { secret_id: s.id });
         h.ipv4 = None;
         h.ipv6 = Some("[2001:db8::1]".into());
-        let inv = prepare_connect(&h, &v, d.path(), false).unwrap();
+        let inv = prepare_connect(&h, &v, d.path(), false, &Default::default()).unwrap();
         assert_eq!(inv.args.last().unwrap(), "luke@2001:db8::1");
         h.ipv6 = Some("fe80::1%3".into());
-        let inv = prepare_connect(&h, &v, d.path(), false).unwrap();
+        let inv = prepare_connect(&h, &v, d.path(), false, &Default::default()).unwrap();
         assert_eq!(inv.args.last().unwrap(), "luke@fe80::1%3");
     }
 
@@ -251,9 +259,25 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let s = secret(SecretKind::SshKey, b"x");
         let v = vault_with(&s, d.path());
-        let r = prepare_connect(&host(Auth::Key { secret_id: Uuid::new_v4() }), &v, d.path(), false);
+        let r = prepare_connect(&host(Auth::Key { secret_id: Uuid::new_v4() }), &v, d.path(), false, &Default::default());
         assert!(matches!(r, Err(ConnectError::SecretMissing)));
         assert_eq!(ConnectError::SecretMissing.to_string(), "Secret missing");
+    }
+
+    #[test]
+    fn password_invocation_env() {
+        let d = tempfile::tempdir().unwrap();
+        let s = secret(SecretKind::Password, b"pw");
+        let v = vault_with(&s, d.path());
+        let reg = crate::askpass::Registry::default();
+        let inv = prepare_connect(&host(Auth::Password { secret_id: s.id }), &v, d.path(), false, &reg).unwrap();
+        let env: std::collections::HashMap<_, _> = inv.env.iter().cloned().collect();
+        assert_eq!(env["SSH_ASKPASS_REQUIRE"], "force");
+        assert_eq!(env["LZSSH_ASKPASS"], "1");
+        assert!(env["SSH_ASKPASS"].ends_with(".exe"));
+        let tok = &env["LZSSH_ASKPASS_TOKEN"];
+        assert!(tok.len() == 32 && tok.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(crate::askpass::take(&reg, tok).unwrap().as_str(), "pw");
     }
 
     #[test]
@@ -261,7 +285,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let s = secret(SecretKind::Password, b"pw");
         let v = vault_with(&s, d.path());
-        let inv = prepare_connect(&host(Auth::Password { secret_id: s.id }), &v, d.path(), false).unwrap();
+        let inv = prepare_connect(&host(Auth::Password { secret_id: s.id }), &v, d.path(), false, &Default::default()).unwrap();
         assert_eq!(inv.args, vec!["-o", "PreferredAuthentications=password,keyboard-interactive", "-p", "2222", "--", "luke@10.0.0.5"]);
     }
 

@@ -34,6 +34,7 @@ pub struct LzApp {
     pub paired: Arc<RwLock<Vec<PairedDevice>>>,
     pub net: Option<(Sender<NetCmd>, Receiver<NetEvent>)>,
     pub node_id: Option<String>,
+    pub askpass: crate::askpass::Registry,
 }
 
 const TOAST_TTL: Duration = Duration::from_secs(5);
@@ -67,6 +68,7 @@ impl LzApp {
             paired: Arc::new(RwLock::new(Vec::new())),
             net: None,
             node_id: None,
+            askpass: crate::askpass::spawn_server(),
         }
     }
 

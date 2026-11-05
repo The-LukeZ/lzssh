@@ -61,7 +61,7 @@ fn new_host(folder_id: Option<Uuid>) -> Host {
 pub fn connect(app: &mut LzApp, id: Uuid, prefer_v6: bool) {
     let Some(host) = app.store.hosts.iter().find(|h| h.id == id).cloned() else { return };
     let Some(vault) = app.vault.as_ref() else { return };
-    let r = prepare_connect(&host, vault, &app.run_dir, prefer_v6).and_then(|inv| launch_in_terminal(&host.name, &inv));
+    let r = prepare_connect(&host, vault, &app.run_dir, prefer_v6, &app.askpass).and_then(|inv| launch_in_terminal(&host.name, &inv));
     if let Err(e) = r {
         app.toast(format!("{}: {e}", host.name));
     }
@@ -381,7 +381,7 @@ pub fn export_dialog(app: &mut LzApp, ui: &mut egui::Ui) {
     let r = crate::export::authorized_keys_command(&pk)
         .map_err(|e| e.to_string())
         .and_then(|cmd| {
-            let mut inv = prepare_connect(&host, vault, &app.run_dir, false).map_err(|e| e.to_string())?;
+            let mut inv = prepare_connect(&host, vault, &app.run_dir, false, &app.askpass).map_err(|e| e.to_string())?;
             // Force a TTY so the tab can wait for Enter and the user sees the result.
             let dashdash = inv.args.iter().position(|a| a == "--").unwrap_or(inv.args.len());
             inv.args.insert(dashdash, "-t".into());

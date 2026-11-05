@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(dead_code)]
+mod askpass;
 mod connect;
 mod device;
 mod dpapi;
@@ -26,6 +27,10 @@ fn single_instance() -> bool {
 }
 
 fn main() {
+    // ssh.exe runs us as its SSH_ASKPASS helper: answer and exit, no UI, no instance lock.
+    if std::env::var("LZSSH_ASKPASS").as_deref() == Ok("1") {
+        std::process::exit(askpass::client_main());
+    }
     if !single_instance() {
         // SAFETY: static wide strings, no owner window.
         unsafe { MessageBoxW(None, w!("lzssh is already running"), w!("lzssh"), MB_OK | MB_ICONINFORMATION) };
