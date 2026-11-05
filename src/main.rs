@@ -31,7 +31,7 @@ fn main() {
     let run_dir = paths::run_dir();
     connect::clean_run_dir(&run_dir);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("lzssh").with_inner_size([1000.0, 650.0]).with_min_inner_size([700.0, 450.0]),
+        viewport: egui::ViewportBuilder::default().with_title("lzssh").with_inner_size([1400.0, 900.0]).with_min_inner_size([700.0, 450.0]),
         ..Default::default()
     };
     let r = eframe::run_native("lzssh", options, Box::new(|cc| {
