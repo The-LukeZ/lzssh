@@ -1,6 +1,7 @@
 //! Secrets screen: list, import SSH key / FIDO handle, add password, delete.
 use super::app::LzApp;
-use crate::keys::public_key_for;
+use crate::keys::{FidoKey, FidoType, create_fido_key, public_key_for};
+use std::sync::mpsc::Receiver;
 use crate::vault::{PlainSecret, SecretKind};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -10,6 +11,15 @@ use zeroize::Zeroizing;
 pub struct SecretsState {
     form: Option<Form>,
     confirm_delete: Option<Uuid>,
+    create: Option<CreateFido>,
+}
+
+struct CreateFido {
+    name: String,
+    kind: FidoType,
+    error: Option<String>,
+    /// Set while ssh-keygen runs (the Windows security-key dialog is open).
+    pending: Option<Receiver<Result<FidoKey, String>>>,
 }
 
 struct Form {
@@ -61,7 +71,10 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
         if ui.button("Import SSH key").clicked() {
             app.secrets_ui.form = Some(Form::new(SecretKind::SshKey));
         }
-        if ui.button("Import FIDO key").clicked() {
+        if ui.button("Create FIDO key").clicked() {
+            app.secrets_ui.create = Some(CreateFido { name: "YubiKey".into(), kind: FidoType::Ed25519Sk, error: None, pending: None });
+        }
+        if ui.button("Import FIDO key file").clicked() {
             app.secrets_ui.form = Some(Form::new(SecretKind::FidoKey));
         }
         if ui.button("Add password").clicked() {
@@ -69,6 +82,88 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
         }
     });
     ui.separator();
+
+    if let Some(c) = app.secrets_ui.create.as_mut() {
+        let mut close = false;
+        if let Some(rx) = &c.pending {
+            match rx.try_recv() {
+                Ok(Ok(k)) => {
+                    let s = PlainSecret {
+                        id: Uuid::new_v4(),
+                        name: c.name.trim().to_string(),
+                        kind: SecretKind::FidoKey,
+                        public_key: Some(k.public_key),
+                        material: k.handle,
+                        passphrase: None,
+                    };
+                    match vault.upsert(s) {
+                        Ok(()) => {
+                            changed = true;
+                            toast = Some(format!("Created FIDO key {}", c.name.trim()));
+                            close = true;
+                        }
+                        Err(e) => c.error = Some(e.to_string()),
+                    }
+                    c.pending = None;
+                }
+                Ok(Err(e)) => {
+                    c.error = Some(e);
+                    c.pending = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui.ctx().request_repaint_after(std::time::Duration::from_millis(200)),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    c.error = Some("Key creation failed".into());
+                    c.pending = None;
+                }
+            }
+        }
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.strong("Create FIDO key");
+            ui.label("Windows will ask you to touch your security key or confirm with Windows Hello.");
+            ui.add_enabled_ui(c.pending.is_none(), |ui| {
+                egui::Grid::new("fido_form").num_columns(2).show(ui, |ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut c.name);
+                    ui.end_row();
+                    ui.label("Type");
+                    ui.vertical(|ui| {
+                        for t in [FidoType::Ed25519Sk, FidoType::EcdsaSk] {
+                            ui.radio_value(&mut c.kind, t, t.label());
+                        }
+                    });
+                    ui.end_row();
+                });
+            });
+            if let Some(e) = &c.error {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            ui.horizontal(|ui| {
+                if c.pending.is_some() {
+                    ui.spinner();
+                    ui.label("Waiting for the Windows security dialog…");
+                } else {
+                    if ui.add_enabled(!c.name.trim().is_empty(), egui::Button::new("Create")).clicked() {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let (kind, dir, comment) = (c.kind, app.run_dir.clone(), format!("lzssh {}", c.name.trim()));
+                        let ctx = ui.ctx().clone();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(create_fido_key(kind, &dir, &comment));
+                            ctx.request_repaint();
+                        });
+                        c.error = None;
+                        c.pending = Some(rx);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                }
+            });
+        });
+        if close {
+            app.secrets_ui.create = None;
+        }
+        ui.separator();
+    }
 
     if let Some(f) = app.secrets_ui.form.as_mut() {
         let mut close = false;
