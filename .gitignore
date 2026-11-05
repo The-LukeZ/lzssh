@@ -9,3 +9,8 @@
 #/target
 /.idea/
 /dist
+
+# Worker (pnpm / wrangler)
+node_modules/
+/worker/.wrangler/
+/worker/.env
