@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::ServerOptions;
 pub use zeroize::Zeroizing;
 
@@ -55,7 +55,9 @@ async fn handle(mut pipe: tokio::net::windows::named_pipe::NamedPipeServer, reg:
     };
     pipe.write_all(reply.as_bytes()).await?;
     pipe.flush().await?;
-    let _ = pipe.disconnect();
+    // No disconnect(): DisconnectNamedPipe discards unread data, racing the client's read
+    // (os error 233). Wait for the client to close its end (EOF/broken pipe), then just drop.
+    let _ = tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut [0u8; 1])).await;
     Ok(())
 }
 
