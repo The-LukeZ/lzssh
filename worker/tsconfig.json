@@ -8,7 +8,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
-    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types"]
+    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types", "node"]
   },
   "include": ["src", "test", "vitest.config.ts"]
 }

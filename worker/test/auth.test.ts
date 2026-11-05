@@ -9,7 +9,7 @@ const own = async () => {
 
 describe("request authentication", () => {
   it("signing string is exact", async () => {
-    expect(await signingString("POST", "/v1/mailbox/ab", "1700000000", new TextEncoder().encode("{}"))).toBe(
+    expect(signingString("POST", "/v1/mailbox/ab", "1700000000", new TextEncoder().encode("{}"))).toBe(
       "lzssh-req-v1\nPOST\n/v1/mailbox/ab\n1700000000\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     );
   });
@@ -48,6 +48,43 @@ describe("request authentication", () => {
     const d = await newDevice();
     expect((await call(await signedRequest(d, "GET", "/v2/x"))).status).toBe(404);
     expect((await call(new Request(BASE + "/"))).status).toBe(404);
+  });
+
+  it("non-canonical signature encoding cannot bypass replay", async () => {
+    const { d, path } = await own();
+    const req = await signedRequest(d, "GET", path);
+    const sig = req.headers.get("X-Lz-Sig")!;
+    expect((await call(req)).status).toBe(200);
+    const urlSafe = sig.replace(/\+/g, "-").replace(/\//g, "_");
+    for (const variant of [sig.replace(/=+$/, ""), urlSafe, urlSafe.replace(/=+$/, "")]) {
+      const headers = new Headers(req.headers);
+      headers.set("X-Lz-Sig", variant);
+      expect((await call(new Request(req.url, { headers }))).status).not.toBe(200);
+    }
+  });
+
+  it("query string is rejected", async () => {
+    const { d, path } = await own();
+    const req = await signedRequest(d, "GET", path);
+    expect((await call(new Request(req.url + "?x=1", { headers: req.headers }))).status).toBe(404);
+  });
+
+  it("streamed body over 1 MiB without Content-Length gives 413", async () => {
+    const { d, path } = await own();
+    const req = await signedRequest(d, "GET", path);
+    const chunk = new Uint8Array(64 * 1024);
+    let sent = 0;
+    const body = new ReadableStream({
+      pull(c) {
+        if (sent > 1024 * 1024 + chunk.length) return c.close();
+        sent += chunk.length;
+        c.enqueue(chunk);
+      },
+    });
+    const headers = new Headers(req.headers);
+    headers.delete("Content-Length");
+    const r = await call(new Request(BASE + path, { method: "POST", headers, body, duplex: "half" } as RequestInit));
+    expect(r.status).toBe(413);
   });
 
   it("malformed device id gives 401", async () => {

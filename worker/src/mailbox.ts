@@ -60,7 +60,7 @@ export class Mailbox extends DurableObject<Env> {
     const raw = ticket ? fromHex(ticket.toLowerCase()) : null;
     if (!raw || raw.length !== 32) return false;
     const row = this.sql.exec<{ hash: string; expires: number }>("SELECT hash, expires FROM pairing WHERE k = 1").toArray()[0];
-    if (!row || row.expires < nowSec() || row.hash !== (await sha256Hex(raw))) return false;
+    if (!row || row.expires < nowSec() || row.hash !== sha256Hex(raw)) return false;
     this.sql.exec("DELETE FROM pairing");
     return true;
   }

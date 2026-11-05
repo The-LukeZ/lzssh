@@ -124,7 +124,7 @@ describe("mailbox", () => {
     const body = envelope(a, a, "payload", "Y3Q=", id);
     expect((await post(a, a, body)).status).toBe(201);
     // Same body again (new time, so it is not a replay).
-    expect((await call(await signedRequest(a, "POST", mb(a), body, { time: now() - 1 }))).status).toBe(201);
+    expect((await call(await signedRequest(a, "POST", mb(a), body, { time: now() - 5 }))).status).toBe(201);
     expect(((await (await list(a)).json()) as { messages: unknown[] }).messages).toHaveLength(1);
   });
 

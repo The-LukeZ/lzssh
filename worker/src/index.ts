@@ -62,16 +62,41 @@ async function dispatch(env: Env, r: Route, ctx: CallCtx, body: Uint8Array, tick
   }
 }
 
+/** Reads the body, stopping as soon as it grows past `max` (null then). */
+async function readCapped(req: Request, max: number): Promise<Uint8Array | null> {
+  if (Number(req.headers.get("Content-Length") ?? "0") > max) return null;
+  if (!req.body) return new Uint8Array();
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  const reader = req.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > max) {
+      await reader.cancel();
+      return null;
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
 export default {
   async fetch(req, env): Promise<Response> {
-    const r = route(req.method, new URL(req.url).pathname);
+    const url = new URL(req.url);
+    const r = url.search ? null : route(req.method, url.pathname);
     if (!r) return json(404, { error: "not_found" });
-    if (!(await tokenOk(req.headers.get("Authorization"), env.ACCESS_TOKEN))) return json(401, { error: "token" });
-    const declared = Number(req.headers.get("Content-Length") ?? "0");
-    if (declared > MAX_BODY) return json(413, { error: "too_large" });
-    const body = new Uint8Array(await req.arrayBuffer());
-    if (body.length > MAX_BODY) return json(413, { error: "too_large" });
-    const v = await verifyRequest(req, body, Math.floor(Date.now() / 1000));
+    if (!tokenOk(req.headers.get("Authorization"), env.ACCESS_TOKEN)) return json(401, { error: "token" });
+    const body = await readCapped(req, MAX_BODY);
+    if (!body) return json(413, { error: "too_large" });
+    const v = verifyRequest(req, url.pathname, body, Math.floor(Date.now() / 1000));
     if ("error" in v) return json(401, v);
     const ctx: CallCtx = { mailbox: r.mailbox, caller: v.device, sig: v.sig };
     const res = await dispatch(env, r, ctx, body, req.headers.get("X-Lz-Pair-Ticket"));
