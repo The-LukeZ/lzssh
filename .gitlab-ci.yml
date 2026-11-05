@@ -31,6 +31,7 @@ test:windows:
 
 build:windows:
   stage: build
+  needs: []  # run in parallel with the (slow to start) Windows test VM
   image: messense/cargo-xwin@sha256:9856b895265d4966f212228ba64802cf89337e2a2a537aa2533c1b8784cbc81b
   cache:
     key: cargo-xwin-$CI_COMMIT_REF_SLUG  # per ref: tag builds never reuse another ref's cache
@@ -46,12 +47,9 @@ build:windows:
     - cp "target/$TARGET/release/lzssh.exe" "target/$TARGET/release/lzssh-ssh.exe" dist/lzssh/
     - (command -v zip >/dev/null || (apt-get update -qq && apt-get install -y -qq zip >/dev/null))
     - (cd dist && zip -r "../$ZIP" lzssh)
-    - echo "ZIP=$ZIP" >> build.env
   artifacts:
     name: "lzssh-windows-x64"
     paths: ["lzssh-*-windows-x64.zip"]
-    reports:
-      dotenv: build.env
     expire_in: 30 days
 
 # Upload in its own small job so the third-party toolchain image never handles release credentials.
@@ -61,6 +59,9 @@ upload:
   needs: [build:windows, test:windows]
   rules:
     - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"
+  # Names derived only from trusted predefined variables, never from the build job's output.
+  variables:
+    ZIP: "lzssh-${CI_COMMIT_TAG}-windows-x64.zip"
   script:
     - |
       curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$ZIP" "${PACKAGE_REGISTRY_URL}/${CI_COMMIT_TAG}/${ZIP}"
@@ -68,9 +69,11 @@ upload:
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/cli@sha256:00884510ffcbb6b03c0abc5dd058d7728a646cab2a419de4a7108d073ce90a03
-  needs: [build:windows, upload]
+  needs: [upload]
   rules:
     - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"
+  variables:
+    ZIP: "lzssh-${CI_COMMIT_TAG}-windows-x64.zip"
   script:
     - echo "Releasing $CI_COMMIT_TAG with $ZIP"
   release:
