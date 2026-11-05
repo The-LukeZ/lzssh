@@ -65,7 +65,7 @@ fn wt_exe() -> PathBuf {
 }
 
 /// Restrict a path to the current user only (Windows OpenSSH refuses keys readable by others).
-fn restrict_acl(path: &Path) -> Result<(), ConnectError> {
+pub(crate) fn restrict_acl(path: &Path) -> Result<(), ConnectError> {
     let user = match (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
         (Ok(d), Ok(u)) => format!("{d}\\{u}"),
         (_, Ok(u)) => u,
@@ -73,7 +73,7 @@ fn restrict_acl(path: &Path) -> Result<(), ConnectError> {
     };
     let out = Command::new(system32("icacls.exe"))
         .arg(path)
-        .args(["/inheritance:r", "/grant:r", &format!("{user}:F")])
+        .args(["/inheritance:r", "/grant:r", &format!("{user}:{}", if path.is_dir() { "(OI)(CI)F" } else { "F" })])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| ConnectError::Key(format!("icacls: {e}")))?;

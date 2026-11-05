@@ -54,7 +54,14 @@ pub struct FidoKey {
 pub fn create_fido_key(t: FidoType, work_dir: &std::path::Path, comment: &str) -> Result<FidoKey, String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let out = work_dir.join(format!("new-sk-{}", uuid::Uuid::new_v4()));
+    // Fresh user-only directory, so the handle file is never readable by others, even briefly.
+    let dir = work_dir.join(format!("new-sk-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).map_err(|e| format!("Cannot create temp dir: {e}"))?;
+    if let Err(e) = crate::connect::restrict_acl(&dir) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(e.to_string());
+    }
+    let out = dir.join("id_sk");
     let pub_path = std::path::PathBuf::from(format!("{}.pub", out.display()));
     let res = std::process::Command::new(SSH_KEYGEN_EXE)
         .args(fido_keygen_args(t, &out, comment))
@@ -72,8 +79,7 @@ pub fn create_fido_key(t: FidoType, work_dir: &std::path::Path, comment: &str) -
             _ => Err("ssh-keygen did not write the key files".into()),
         },
     };
-    let _ = std::fs::remove_file(&out);
-    let _ = std::fs::remove_file(&pub_path);
+    let _ = std::fs::remove_dir_all(&dir);
     result
 }
 
