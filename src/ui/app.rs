@@ -2,7 +2,11 @@ use crate::connect::clean_run_dir;
 use crate::model::Store;
 use crate::paths;
 use crate::vault::Vault;
+use crate::device::{Device, PairedDevice};
+use crate::sync::net::{self, NetCmd, NetEvent};
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +28,12 @@ pub struct LzApp {
     pub unlock: super::unlock::UnlockState,
     pub secrets_ui: super::secrets::SecretsState,
     pub hosts_ui: super::hosts::HostsState,
+    pub devices_ui: super::devices::DevicesState,
+    pub device_path: PathBuf,
+    pub device: Option<crate::device::Device>,
+    pub paired: Arc<RwLock<Vec<PairedDevice>>>,
+    pub net: Option<(Sender<NetCmd>, Receiver<NetEvent>)>,
+    pub node_id: Option<String>,
 }
 
 const TOAST_TTL: Duration = Duration::from_secs(5);
@@ -51,6 +61,12 @@ impl LzApp {
             unlock: Default::default(),
             secrets_ui: Default::default(),
             hosts_ui: Default::default(),
+            devices_ui: Default::default(),
+            device_path: data.join("device.json"),
+            device: None,
+            paired: Arc::new(RwLock::new(Vec::new())),
+            net: None,
+            node_id: None,
         }
     }
 
@@ -78,7 +94,76 @@ impl LzApp {
     }
 
     /// Called once after the vault is unlocked.
-    pub fn on_unlocked(&mut self) {}
+    pub fn on_unlocked(&mut self) {
+        match Device::load_or_create(&self.device_path) {
+            Ok(d) => {
+                *self.paired.write().expect("paired lock") = d.paired.clone();
+                self.net = Some(net::spawn(d.secret_key, d.name.clone(), self.paired.clone()));
+                self.device = Some(d);
+            }
+            Err(e) => self.toast(format!("Sync unavailable: could not load device.json: {e}")),
+        }
+    }
+
+    /// Persist device name and the paired list (the network thread may have added peers).
+    pub fn save_device(&mut self) {
+        let paired = self.paired.read().expect("paired lock").clone();
+        if let Some(d) = self.device.as_mut() {
+            d.paired = paired;
+            if let Err(e) = d.save(&self.device_path) {
+                let msg = format!("Could not save device.json: {e}");
+                self.toast(msg);
+            }
+        }
+    }
+
+    pub fn device_name(&self, node_id: &str) -> String {
+        self.paired.read().expect("paired lock").iter().find(|d| d.node_id == node_id).map(|d| d.name.clone()).unwrap_or_else(|| format!("{}…", &node_id[..node_id.len().min(8)]))
+    }
+
+    pub fn send_cmd(&mut self, c: NetCmd) {
+        match &self.net {
+            Some((tx, _)) if tx.send(c).is_ok() => {}
+            _ => self.toast("Sync is not running"),
+        }
+    }
+
+    fn poll_net(&mut self) {
+        let Some((_, rx)) = &self.net else { return };
+        let events: Vec<NetEvent> = rx.try_iter().collect();
+        for e in events {
+            match e {
+                NetEvent::Ready { node_id } => self.node_id = Some(node_id),
+                NetEvent::PairCode(c) => self.devices_ui.set_code(c),
+                NetEvent::Paired(d) => {
+                    self.devices_ui.clear_code();
+                    self.save_device();
+                    self.toast(format!("Paired with {}", d.name));
+                }
+                NetEvent::Received { from, payload } => {
+                    let name = self.device_name(&from);
+                    let Some(vault) = self.vault.as_mut() else { continue };
+                    match crate::sync::payload::apply_payload(&mut self.store, vault, payload) {
+                        Ok(s) => {
+                            self.save_store();
+                            self.save_vault();
+                            self.toast(format!("Received {} hosts, {} secrets from {name}", s.hosts, s.secrets));
+                        }
+                        Err(e) => self.toast(format!("Could not apply data from {name}: {e}")),
+                    }
+                }
+                NetEvent::Sent { to } => {
+                    let name = self.device_name(&to);
+                    self.toast(format!("Sent to {name}"));
+                }
+                NetEvent::SendFailed { to, error } => {
+                    let name = self.device_name(&to);
+                    self.toast(format!("{name} not reachable ({error})"));
+                }
+                NetEvent::Error(e) => self.toast(e),
+            }
+        }
+    }
 
     fn nav(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("nav").show(ui, |ui| {
@@ -110,17 +195,20 @@ impl LzApp {
 
 impl eframe::App for LzApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_net();
+        if self.net.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+        }
         if self.screen != Screen::Unlock {
             self.nav(ui);
         }
+        super::devices::send_dialog(self, ui);
         self.show_toasts(ui);
         egui::CentralPanel::default().show(ui, |ui| match self.screen {
             Screen::Unlock => super::unlock::show(self, ui),
             Screen::Secrets => super::secrets::show(self, ui),
             Screen::Hosts => super::hosts::show(self, ui),
-            Screen::Devices => {
-                ui.label("Coming soon");
-            }
+            Screen::Devices => super::devices::show(self, ui),
         });
     }
 
