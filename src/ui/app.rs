@@ -14,6 +14,7 @@ pub enum Screen {
     Unlock,
     Hosts,
     Secrets,
+    KnownHosts,
     Devices,
 }
 
@@ -35,6 +36,7 @@ pub struct LzApp {
     pub net: Option<(Sender<NetCmd>, Receiver<NetEvent>)>,
     pub node_id: Option<String>,
     pub askpass: crate::askpass::Registry,
+    pub known_hosts_ui: super::known_hosts::KnownHostsState,
 }
 
 const TOAST_TTL: Duration = Duration::from_secs(5);
@@ -69,6 +71,7 @@ impl LzApp {
             net: None,
             node_id: None,
             askpass: crate::askpass::spawn_server(),
+            known_hosts_ui: Default::default(),
         }
     }
 
@@ -172,7 +175,7 @@ impl LzApp {
             ui.horizontal(|ui| {
                 ui.heading("lzssh");
                 ui.separator();
-                for (s, label) in [(Screen::Hosts, "Hosts"), (Screen::Secrets, "Secrets"), (Screen::Devices, "Devices")] {
+                for (s, label) in [(Screen::Hosts, "Hosts"), (Screen::Secrets, "Secrets"), (Screen::KnownHosts, "Known hosts"), (Screen::Devices, "Devices")] {
                     if ui.selectable_label(self.screen == s, label).clicked() {
                         self.screen = s;
                     }
@@ -211,6 +214,7 @@ impl eframe::App for LzApp {
             Screen::Unlock => super::unlock::show(self, ui),
             Screen::Secrets => super::secrets::show(self, ui),
             Screen::Hosts => super::hosts::show(self, ui),
+            Screen::KnownHosts => super::known_hosts::show(self, ui),
             Screen::Devices => super::devices::show(self, ui),
         });
     }

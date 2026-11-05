@@ -6,6 +6,7 @@ mod device;
 mod dpapi;
 mod export;
 mod keys;
+mod known_hosts;
 mod model;
 mod paths;
 mod sync;
