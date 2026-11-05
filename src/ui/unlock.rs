@@ -15,7 +15,7 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
     let mut submit = false;
     ui.vertical_centered(|ui| {
         ui.add_space(ui.available_height() / 4.0);
-        ui.heading(if creating { "Set a 6-digit PIN" } else { "Enter PIN" });
+        ui.heading(if creating { "Set a PIN (6 to 256 digits)" } else { "Enter PIN" });
         if creating {
             ui.label("The PIN encrypts your secrets. There is no recovery if you forget it.");
         }

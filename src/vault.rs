@@ -46,7 +46,7 @@ pub struct SecretMeta {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VaultError {
-    #[error("PIN must be 6 digits")]
+    #[error("PIN must be 6 to 256 digits")]
     InvalidPin,
     #[error("Wrong PIN")]
     WrongPin,
@@ -58,10 +58,10 @@ pub enum VaultError {
     Io(String),
 }
 
-/// Trims surrounding whitespace (pasted PINs often carry a newline) and requires 6 ASCII digits.
+/// Trims surrounding whitespace (pasted PINs often carry a newline) and requires 6 to 256 ASCII digits.
 pub fn normalize_pin(input: &str) -> Result<String, VaultError> {
     let p = input.trim();
-    if p.len() == 6 && p.bytes().all(|b| b.is_ascii_digit()) {
+    if (6..=256).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()) {
         Ok(p.to_string())
     } else {
         Err(VaultError::InvalidPin)
@@ -243,8 +243,9 @@ mod tests {
     }
 
     #[test] fn normalize_pin_trims_paste() { assert_eq!(normalize_pin(" 123456\r\n").unwrap(), "123456"); }
-    #[test] fn normalize_pin_rejects_bad() { for p in ["12345","1234567","12a456",""] { assert!(matches!(normalize_pin(p), Err(VaultError::InvalidPin))); } }
-    #[test] fn invalid_pin_message() { assert_eq!(VaultError::InvalidPin.to_string(), "PIN must be 6 digits"); }
+    #[test] fn normalize_pin_rejects_bad() { let long = "1".repeat(257); for p in ["12345","12a456","","123 456", long.as_str()] { assert!(matches!(normalize_pin(p), Err(VaultError::InvalidPin))); } }
+    #[test] fn normalize_pin_accepts_6_to_256_digits() { for n in [6, 7, 12, 256] { let p = "9".repeat(n); assert_eq!(normalize_pin(&p).unwrap(), p); } }
+    #[test] fn invalid_pin_message() { assert_eq!(VaultError::InvalidPin.to_string(), "PIN must be 6 to 256 digits"); }
 
     #[test] fn vault_create_unlock_roundtrip() {
         let d = tempfile::tempdir().unwrap();
