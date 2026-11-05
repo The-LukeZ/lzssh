@@ -3119,6 +3119,7 @@ dependencies = [
  "data-encoding",
  "dirs",
  "eframe",
+ "egui",
  "hex",
  "iroh",
  "rand 0.10.3",
