@@ -102,11 +102,17 @@ impl LzApp {
         match Device::load_or_create(&self.device_path) {
             Ok(d) => {
                 *self.paired.write().expect("paired lock") = d.paired.clone();
-                self.net = Some(mailbox::spawn(d.secret_key, d.name.clone(), self.paired.clone(), None));
                 self.device = Some(d);
+                self.restart_sync();
             }
             Err(e) => self.toast(format!("Sync unavailable: could not load device.json: {e}")),
         }
+    }
+
+    /// (Re)starts the sync thread with the current device name and server.
+    pub fn restart_sync(&mut self) {
+        let Some(d) = &self.device else { return };
+        self.net = Some(mailbox::spawn(d.secret_key, d.name.clone(), self.paired.clone(), d.server.clone()));
     }
 
     /// Persist device name and the paired list (the network thread may have added peers).
@@ -144,13 +150,14 @@ impl LzApp {
                     self.save_device();
                     self.toast(format!("Paired with {}", d.name));
                 }
-                NetEvent::Received { id: _, from, payload } => {
+                NetEvent::Received { id, from, payload } => {
                     let name = self.device_name(&from);
                     let Some(vault) = self.vault.as_mut() else { continue };
                     match crate::sync::payload::apply_payload(&mut self.store, vault, payload) {
                         Ok(s) => {
                             self.save_store();
                             self.save_vault();
+                            self.send_cmd(NetCmd::Ack(id));
                             self.toast(format!("Received {} hosts, {} secrets from {name}", s.hosts, s.secrets));
                         }
                         Err(e) => self.toast(format!("Could not apply data from {name}: {e}")),
@@ -158,14 +165,23 @@ impl LzApp {
                 }
                 NetEvent::Sent { to } => {
                     let name = self.device_name(&to);
-                    self.toast(format!("Sent to {name}"));
+                    self.toast(format!("Sent to {name}. It arrives when {name} next has lzssh unlocked."));
                 }
                 NetEvent::SendFailed { to, error } => {
                     let name = self.device_name(&to);
-                    self.toast(format!("{name} not reachable ({error})"));
+                    self.toast(format!("Could not send to {name}: {error}"));
                 }
-                NetEvent::ServerChanged(_) => {}
-                NetEvent::Error(e) => self.toast(e),
+                NetEvent::ServerChanged(cfg) => {
+                    if let Some(d) = self.device.as_mut() {
+                        d.server = Some(cfg);
+                    }
+                    self.devices_ui.forget_server_edit();
+                    self.save_device();
+                }
+                NetEvent::Error(e) => {
+                    self.devices_ui.stop_waiting();
+                    self.toast(e)
+                }
             }
         }
     }

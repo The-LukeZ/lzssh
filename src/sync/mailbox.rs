@@ -589,4 +589,33 @@ mod tests {
         assert!(matches!(evs.as_slice(), [NetEvent::ServerChanged(c)] if c.url == URL && c.token == "tok"));
         assert_eq!(paired_names(&a.poll(T0 + 1)).len(), 1);
     }
+
+    /// Runs against a real Worker: `LZSSH_TEST_SERVER=http://127.0.0.1:8787 LZSSH_TEST_TOKEN=… cargo test -- --ignored live_`.
+    #[test]
+    #[ignore]
+    fn live_pair_and_send() {
+        let (Ok(url), Ok(token)) = (std::env::var("LZSSH_TEST_SERVER"), std::env::var("LZSSH_TEST_TOKEN")) else {
+            panic!("set LZSSH_TEST_SERVER and LZSSH_TEST_TOKEN");
+        };
+        let cfg = ServerConfig { url, token };
+        let mk = |name: &str| {
+            let make: MakeTransport<HttpTransport> = Box::new(|c, k| HttpTransport::new(&c.url, &c.token, k));
+            Core::new(DeviceKeys::from_secret(&crate::vault::random()), name.into(), Arc::new(RwLock::new(Vec::new())), Some(cfg.clone()), make)
+        };
+        let (mut a, mut b) = (mk("A"), mk("B"));
+        let c = code_of(a.start_pairing(unix_now()));
+        assert!(b.enter_code(&c).is_empty());
+        assert_eq!(paired_names(&a.poll(unix_now())), vec![(b.id(), "B".to_string())]);
+        assert_eq!(paired_names(&b.poll(unix_now())), vec![(a.id(), "A".to_string())]);
+        assert!(matches!(b.send(&a.id(), &payload("live")).as_slice(), [NetEvent::Sent { .. }]));
+        let id = match a.poll(unix_now()).as_slice() {
+            [NetEvent::Received { id, payload, .. }] => {
+                assert_eq!(payload.hosts[0].name, "live");
+                id.clone()
+            }
+            e => panic!("expected Received, got {e:?}"),
+        };
+        assert!(a.ack(&id).is_empty());
+        assert!(a.poll(unix_now()).is_empty());
+    }
 }

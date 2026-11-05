@@ -12,7 +12,7 @@ A small SSH host manager for Windows, loosely inspired by Termius. Written in Ru
 - **FIDO / security keys**: create `ecdsa-sk` or `ed25519-sk` keys through the native Windows security key dialog (Windows Hello or a hardware key such as a YubiKey).
 - **Export key to host**: append a public key to a server's `~/.ssh/authorized_keys`.
 - **Known hosts**: view and remove entries from `~/.ssh/known_hosts`.
-- **Device sync**: pair two installs with a one-time code and send selected folders and secrets directly between them over [iroh](https://iroh.computer) (end-to-end encrypted, peer-to-peer with relay fallback).
+- **Device sync**: pair two installs with a one-time code and send selected folders and secrets to the other device. Data goes through a small mailbox on your own Cloudflare Worker (see [Sync server](#sync-server)) and is end-to-end encrypted: the Worker only sees ciphertext. The other device picks it up the next time it has lzssh unlocked.
 
 ## Requirements
 
@@ -32,15 +32,29 @@ cargo build --release --bins
 
 The binaries end up in `target/release/` (`lzssh.exe` and `lzssh-ssh.exe`). Run the tests with `cargo test`.
 
+## Sync server
+
+Sync needs the mailbox Worker in [`worker/`](worker/) deployed to your own Cloudflare account. Deployment is manual:
+
+1. Install the dependencies: `cd worker && pnpm install`
+2. Create an access token, for example with `openssl rand -base64 32`.
+3. Store it as a Worker secret: `pnpm wrangler secret put ACCESS_TOKEN` (wrangler asks for the value; do not pass it on the command line).
+4. Deploy: `pnpm wrangler deploy`. The route in `wrangler.jsonc` points at `lzssh.thelukez.com`; change it for your own domain (the zone must be in the same Cloudflare account).
+5. In lzssh, open **Devices** on the first device and enter the server URL and the token under **Sync server**.
+
+Other devices get the server URL and the token from the pairing code. Every request carries the token and is signed with the device's key; a device can only read its own mailbox and only paired devices can drop messages into it.
+
+For local development, copy `worker/.env.example` to `worker/.env` and run `pnpm dev`. Run the Worker tests with `pnpm test`.
+
 ## Data
 
 Everything lives in `%APPDATA%\lzssh\`:
 
-| File | Contents |
-|------|----------|
-| `hosts.json` | Hosts and folders (plain JSON, no secrets) |
-| `secrets.json` | Encrypted vault |
-| `device.json` | Sync identity (DPAPI-protected) and paired devices |
+| File           | Contents                                                                   |
+| -------------- | -------------------------------------------------------------------------- |
+| `hosts.json`   | Hosts and folders (plain JSON, no secrets)                                 |
+| `secrets.json` | Encrypted vault                                                            |
+| `device.json`  | Sync identity and sync server token (both DPAPI-protected), paired devices |
 
 Forgetting the PIN means the vault cannot be recovered. Back up the folder if you care about it.
 

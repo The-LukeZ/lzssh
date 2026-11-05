@@ -1,5 +1,6 @@
 //! Devices screen (pairing) and the "Send to device" dialog.
 use super::app::LzApp;
+use crate::device::{DEFAULT_SERVER, ServerConfig};
 use crate::sync::mailbox::NetCmd;
 use crate::sync::payload::{FolderSel, build_payload};
 use std::collections::HashSet;
@@ -16,6 +17,9 @@ pub struct DevicesState {
     name_edit: Option<String>,
     confirm_remove: Option<String>,
     send: Option<SendDialog>,
+    /// Edit buffers for the sync server; None until the section is first shown.
+    server_url: Option<String>,
+    server_token: String,
 }
 
 struct SendDialog {
@@ -32,6 +36,53 @@ impl DevicesState {
     pub fn clear_code(&mut self) {
         self.code = None;
         self.entered.clear();
+    }
+    pub fn stop_waiting(&mut self) {
+        self.waiting_for_code = false;
+    }
+    /// Reload the server fields from device.json next frame (after a pairing code changed it).
+    pub fn forget_server_edit(&mut self) {
+        self.server_url = None;
+        self.server_token.clear();
+    }
+}
+
+fn server_section(app: &mut LzApp, ui: &mut egui::Ui) {
+    ui.heading("Sync server");
+    let current = app.device.as_ref().and_then(|d| d.server.clone());
+    let st = &mut app.devices_ui;
+    let url = st.server_url.get_or_insert_with(|| current.as_ref().map_or(DEFAULT_SERVER.to_string(), |c| c.url.clone()));
+    ui.horizontal(|ui| {
+        ui.label("URL:");
+        ui.add(egui::TextEdit::singleline(url).desired_width(280.0));
+    });
+    let hint = if current.is_some() { "Leave empty to keep the saved token" } else { "Access token" };
+    ui.horizontal(|ui| {
+        ui.label("Token:");
+        ui.add(egui::TextEdit::singleline(&mut st.server_token).password(true).hint_text(hint).desired_width(280.0));
+    });
+    let url_t = url.trim().trim_end_matches('/').to_string();
+    let token = if st.server_token.trim().is_empty() { current.as_ref().map(|c| c.token.clone()) } else { Some(st.server_token.trim().to_string()) };
+    let valid = url_t.starts_with("https://") && token.is_some();
+    let changed = current.as_ref().map(|c| (&c.url, Some(&c.token))) != Some((&url_t, token.as_ref()));
+    let mut save = None;
+    ui.horizontal(|ui| {
+        if ui.add_enabled(valid && changed, egui::Button::new("Save")).clicked() {
+            save = token.clone().map(|t| ServerConfig { url: url_t.clone(), token: t });
+        }
+        match &current {
+            Some(_) => ui.weak("Other devices get the server and token from the pairing code."),
+            None => ui.weak("Needed on the first device only. Other devices get it from the pairing code."),
+        };
+    });
+    if let Some(cfg) = save {
+        if let Some(d) = app.device.as_mut() {
+            d.server = Some(cfg);
+        }
+        app.devices_ui.forget_server_edit();
+        app.save_device();
+        app.restart_sync();
+        app.toast("Sync server saved");
     }
 }
 
@@ -63,9 +114,12 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
         }
     });
     match &app.node_id {
-        Some(id) => ui.weak(format!("Node ID {id}")),
-        None => ui.weak("Starting network…"),
+        Some(id) => ui.weak(format!("Device ID {id}")),
+        None => ui.weak("Starting sync…"),
     };
+    ui.separator();
+
+    server_section(app, ui);
     ui.separator();
 
     ui.heading("Paired devices");
@@ -85,7 +139,7 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
                 if ui.button("Keep").clicked() {
                     app.devices_ui.confirm_remove = None;
                 }
-            } else if ui.button("Remove").on_hover_text("Removes it on this device only").clicked() {
+            } else if ui.button("Remove").on_hover_text("This device stops accepting data from it").clicked() {
                 app.devices_ui.confirm_remove = Some(d.node_id.clone());
             }
         });
@@ -94,6 +148,7 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
         app.paired.write().expect("paired lock").retain(|d| d.node_id != id);
         app.devices_ui.confirm_remove = None;
         app.save_device();
+        app.send_cmd(NetCmd::Unpair(id));
     }
     ui.separator();
 
@@ -111,7 +166,7 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
                     }
                     ui.label(format!("valid for {}:{:02}", left.as_secs() / 60, left.as_secs() % 60));
                 });
-                ui.label("Enter it on the other device. Keep lzssh open here.");
+                ui.label("Enter it on the other device within 10 minutes. Keep lzssh open here until both show the pairing.");
                 ui.ctx().request_repaint_after(Duration::from_secs(1));
             }
             _ => {
@@ -130,13 +185,13 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
         }
         let ui = &mut cols[1];
         ui.strong("Enter a code from another device");
-        ui.add(egui::TextEdit::multiline(&mut app.devices_ui.entered).desired_rows(3).hint_text("LZ1-…").font(egui::TextStyle::Monospace));
+        ui.add(egui::TextEdit::multiline(&mut app.devices_ui.entered).desired_rows(3).hint_text("LZ2-…").font(egui::TextStyle::Monospace));
         if ui.add_enabled(!app.devices_ui.entered.trim().is_empty(), egui::Button::new("Pair")).clicked() {
             let c = app.devices_ui.entered.clone();
             if let Some((tx, _)) = &app.net {
                 let _ = tx.send(NetCmd::EnterCode(c));
             }
-            app.toast("Connecting…");
+            app.toast("Pairing request sent. Waiting for the other device…");
         }
     });
 }
@@ -210,7 +265,7 @@ pub fn send_dialog(app: &mut LzApp, ui: &mut egui::Ui) {
             let ready = dlg.target.is_some() && (!dlg.folders.is_empty() || !dlg.secrets.is_empty());
             send = ui.add_enabled(ready, egui::Button::new("Send")).clicked();
         });
-        ui.weak("The other device must have lzssh open and unlocked.");
+        ui.weak("It arrives the next time the other device has lzssh unlocked.");
     });
     if send {
         let sel: Vec<FolderSel> = dlg.folders.iter().map(|f| f.map_or(FolderSel::Ungrouped, FolderSel::Folder)).collect();

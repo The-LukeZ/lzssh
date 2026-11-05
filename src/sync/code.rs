@@ -18,7 +18,9 @@ pub struct PairCode {
 }
 
 fn check_server(s: &str) -> anyhow::Result<()> {
-    let host = s.strip_prefix("https://").context("Pairing code has an invalid server address")?;
+    // Plain HTTP only for a local `wrangler dev`.
+    let local = ["http://127.0.0.1:", "http://localhost:"].iter().any(|p| s.starts_with(p));
+    let host = s.strip_prefix("https://").or_else(|| if local { s.strip_prefix("http://") } else { None }).context("Pairing code has an invalid server address")?;
     let ok = s.len() <= 200 && !host.is_empty() && host.chars().all(|c| c.is_ascii_alphanumeric() || ".-:/".contains(c));
     ensure!(ok, "Pairing code has an invalid server address");
     Ok(())
@@ -89,7 +91,9 @@ mod tests {
 
     #[test]
     fn bad_server_rejected() {
-        for r in ["http://evil.example/", "file:///c:/x", &format!("https://{}.example/", "a".repeat(300)), "https://"] {
+        let local = PairCode { server: "http://127.0.0.1:8787".into(), ..sample() };
+        assert_eq!(decode(&encode(&local)).unwrap(), local);
+        for r in ["http://evil.example/", "http://127.0.0.1.evil.example/", "http://localhost.evil/", "file:///c:/x", &format!("https://{}.example/", "a".repeat(300)), "https://"] {
             let c = PairCode { server: r.to_string(), ..sample() };
             assert!(decode(&encode(&c)).is_err(), "{r}");
         }
