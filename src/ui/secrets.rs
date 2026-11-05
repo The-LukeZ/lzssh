@@ -63,6 +63,8 @@ fn build(f: &Form) -> Result<PlainSecret, String> {
 }
 
 pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
+    super::quick_unlock::settings(app, ui);
+    ui.separator();
     let Some(vault) = app.vault.as_mut() else { return };
     let mut toast: Option<String> = None;
     let mut changed = false;

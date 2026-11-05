@@ -4,3 +4,4 @@ pub mod hosts;
 pub mod known_hosts;
 pub mod secrets;
 pub mod unlock;
+pub mod quick_unlock;

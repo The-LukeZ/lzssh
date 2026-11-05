@@ -8,6 +8,7 @@ A small SSH host manager for Windows, loosely inspired by Termius. Written in Ru
 
 - **Hosts and folders**: save hosts (name, IPv4/IPv6 address, port, user) in folders and connect with a click. Sessions open in Windows Terminal (or a plain console if Windows Terminal is missing) using the built-in Windows OpenSSH client.
 - **Secrets vault**: passwords, private keys and FIDO keys, encrypted with a numeric PIN of 6 to 256 digits (Argon2id + XChaCha20-Poly1305) and additionally wrapped with Windows DPAPI.
+- **Quick unlock**: unlock with Windows Hello (face, fingerprint, Hello PIN) or a FIDO2 security key (hmac-secret, e.g. YubiKey 5; needs Windows 11) instead of typing the PIN. Set it up on the Secrets screen. The PIN always keeps working.
 - **FIDO / security keys**: create `ecdsa-sk` or `ed25519-sk` keys through the native Windows security key dialog (Windows Hello or a hardware key such as a YubiKey).
 - **Export key to host**: append a public key to a server's `~/.ssh/authorized_keys`.
 - **Known hosts**: view and remove entries from `~/.ssh/known_hosts`.

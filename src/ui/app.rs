@@ -37,6 +37,7 @@ pub struct LzApp {
     pub node_id: Option<String>,
     pub askpass: crate::askpass::Registry,
     pub known_hosts_ui: super::known_hosts::KnownHostsState,
+    pub quick_ui: super::quick_unlock::QuickUnlockState,
 }
 
 const TOAST_TTL: Duration = Duration::from_secs(5);
@@ -69,6 +70,7 @@ impl LzApp {
             node_id: None,
             askpass: crate::askpass::spawn_server(),
             known_hosts_ui: Default::default(),
+            quick_ui: Default::default(),
         }
     }
 

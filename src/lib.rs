@@ -12,3 +12,4 @@ pub mod paths;
 pub mod sync;
 pub mod ui;
 pub mod vault;
+pub mod quick_unlock;
