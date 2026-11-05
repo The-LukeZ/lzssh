@@ -1,0 +1,60 @@
+# lzssh CI: Windows tests + release build on every PR/main push; GitHub Release on v* tags.
+# Release: push a tag like `v0.1.0` (should match Cargo.toml's version).
+# Actions are pinned by commit SHA; bump deliberately.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup update stable --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --locked
+      - run: cargo build --locked --release --bins
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { $env:GITHUB_SHA.Substring(0, 7) }
+          New-Item -ItemType Directory -Force dist/lzssh | Out-Null
+          Copy-Item target/release/lzssh.exe, target/release/lzssh-ssh.exe dist/lzssh/
+          Compress-Archive -Path dist/lzssh -DestinationPath "lzssh-$version-windows-x64.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lzssh-windows-x64
+          path: lzssh-*-windows-x64.zip
+          retention-days: 30
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lzssh-windows-x64
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" "lzssh-${TAG}-windows-x64.zip" \
+            --repo "$GITHUB_REPOSITORY" --title "lzssh $TAG" \
+            --notes "Windows x64 build. Unzip and run \`lzssh.exe\`; keep \`lzssh-ssh.exe\` in the same folder."
