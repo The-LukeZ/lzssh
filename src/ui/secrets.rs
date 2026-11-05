@@ -249,7 +249,7 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
                 ui.horizontal(|ui| {
                     ui.add_sized([name_w, ui.spacing().interact_size.y], egui::Label::new(&m.name).truncate());
                     ui.add_sized([70.0, ui.spacing().interact_size.y], egui::Label::new(m.kind.label()));
-                    // Buttons right-aligned; the public key fills the remaining width and is cut at the edge.
+                    // Buttons right-aligned; the full public key fills the remaining width and wraps.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if app.secrets_ui.confirm_delete == Some(m.id) {
                             if ui.button("Keep").clicked() {
@@ -268,7 +268,7 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
                                 ui.ctx().copy_text(pk.clone());
                             }
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                ui.add(egui::Label::new(egui::RichText::new(pk).monospace()).truncate()).on_hover_text(pk);
+                                ui.add(egui::Label::new(egui::RichText::new(pk).monospace()).wrap_mode(egui::TextWrapMode::Wrap));
                             });
                         }
                     });
