@@ -51,6 +51,19 @@ pub fn prepare_connect(host: &Host, vault: &Vault, run_dir: &Path, prefer_v6: bo
     Ok(SshInvocation { program: SSH_EXE.into(), args, env: vec![] })
 }
 
+/// Absolute path under `%SystemRoot%\System32`, so PATH cannot substitute a planted binary.
+fn system32(exe: &str) -> PathBuf {
+    PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())).join("System32").join(exe)
+}
+
+/// Windows Terminal's per-user app execution alias; falls back to PATH lookup if absent.
+fn wt_exe() -> PathBuf {
+    dirs::data_local_dir()
+        .map(|d| d.join(r"Microsoft\WindowsApps\wt.exe"))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("wt.exe"))
+}
+
 /// Restrict a path to the current user only (Windows OpenSSH refuses keys readable by others).
 fn restrict_acl(path: &Path) -> Result<(), ConnectError> {
     let user = match (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
@@ -58,7 +71,7 @@ fn restrict_acl(path: &Path) -> Result<(), ConnectError> {
         (_, Ok(u)) => u,
         _ => return Err(ConnectError::Key("USERNAME not set".into())),
     };
-    let out = Command::new("icacls")
+    let out = Command::new(system32("icacls.exe"))
         .arg(path)
         .args(["/inheritance:r", "/grant:r", &format!("{user}:F")])
         .creation_flags(CREATE_NO_WINDOW)
@@ -87,8 +100,15 @@ pub fn materialize_key(secret: &PlainSecret, run_dir: &Path) -> Result<PathBuf, 
         None => secret.material.clone(),
     };
     let _ = std::fs::remove_file(&path);
-    std::fs::write(&path, &bytes[..]).map_err(|e| ConnectError::Key(e.to_string()))?;
-    restrict_acl(&path)?;
+    // Lock the empty file down first, then write; on any failure remove it so no key is left behind.
+    let result = std::fs::write(&path, b"")
+        .map_err(|e| ConnectError::Key(e.to_string()))
+        .and_then(|_| restrict_acl(&path))
+        .and_then(|_| std::fs::write(&path, &bytes[..]).map_err(|e| ConnectError::Key(e.to_string())));
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&path);
+        return Err(e);
+    }
     Ok(path)
 }
 
@@ -134,7 +154,7 @@ pub fn launch_in_terminal(title: &str, inv: &SshInvocation) -> Result<(), Connec
     let line = tab_command_line(inv);
     // wt treats ';' as a command separator; escape it so remote commands survive.
     let wt_line = format!("new-tab --title {} {}", quote(title), line.replace(';', "\\;"));
-    let wt = Command::new("wt.exe").raw_arg(&wt_line).envs(inv.env.iter().cloned()).spawn();
+    let wt = Command::new(wt_exe()).raw_arg(&wt_line).envs(inv.env.iter().cloned()).spawn();
     if wt.is_ok() {
         return Ok(());
     }
