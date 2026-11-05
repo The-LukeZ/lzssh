@@ -1,0 +1,27 @@
+[package]
+name = "lzssh"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+argon2 = "0.6.0"
+chacha20poly1305 = "0.11.0"
+data-encoding = "2.11.1"
+dirs = "7.0.0"
+eframe = "0.37.0"
+hex = "0.4.3"
+iroh = "1.4.1"
+rand = "0.10.3"
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+ssh-key = { version = "0.6.7", features = ["encryption", "ed25519", "ecdsa", "rsa"] }
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+uuid = { version = "1.29.0", features = ["v4", "serde"] }
+windows = { version = "0.62.2", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_System_Memory", "Win32_Security"] }
+zeroize = { version = "1.9.1", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
