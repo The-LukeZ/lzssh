@@ -240,42 +240,41 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
     if list.is_empty() {
         ui.label("No secrets yet.");
     }
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("secrets").striped(true).num_columns(4).show(ui, |ui| {
-            for m in &list {
-                ui.label(&m.name);
-                ui.label(m.kind.label());
-                match &m.public_key {
-                    Some(pk) => {
-                        let short: String = if pk.chars().count() > 60 { format!("{}…", pk.chars().take(60).collect::<String>()) } else { pk.clone() };
-                        ui.horizontal(|ui| {
-                            ui.monospace(short);
-                            if ui.small_button("Copy").clicked() {
+    egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+        let name_w = list.iter().map(|m| m.name.chars().count()).max().unwrap_or(0).clamp(8, 30) as f32 * 8.0;
+        for (i, m) in list.iter().enumerate() {
+            let row = egui::Frame::new().fill(if i % 2 == 1 { ui.visuals().faint_bg_color } else { egui::Color32::TRANSPARENT }).inner_margin(egui::Margin::symmetric(4, 2));
+            row.show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.add_sized([name_w, ui.spacing().interact_size.y], egui::Label::new(&m.name).truncate());
+                    ui.add_sized([70.0, ui.spacing().interact_size.y], egui::Label::new(m.kind.label()));
+                    // Buttons right-aligned; the public key fills the remaining width and is cut at the edge.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if app.secrets_ui.confirm_delete == Some(m.id) {
+                            if ui.button("Keep").clicked() {
+                                app.secrets_ui.confirm_delete = None;
+                            }
+                            if ui.button("Really delete").clicked() {
+                                vault.remove(m.id);
+                                changed = true;
+                                app.secrets_ui.confirm_delete = None;
+                            }
+                        } else if ui.button("Delete").clicked() {
+                            app.secrets_ui.confirm_delete = Some(m.id);
+                        }
+                        if let Some(pk) = &m.public_key {
+                            if ui.button("Copy").on_hover_text("Copy public key").clicked() {
                                 ui.ctx().copy_text(pk.clone());
                             }
-                        });
-                    }
-                    None => {
-                        ui.label("");
-                    }
-                }
-                if app.secrets_ui.confirm_delete == Some(m.id) {
-                    ui.horizontal(|ui| {
-                        if ui.button("Really delete").clicked() {
-                            vault.remove(m.id);
-                            changed = true;
-                            app.secrets_ui.confirm_delete = None;
-                        }
-                        if ui.button("Keep").clicked() {
-                            app.secrets_ui.confirm_delete = None;
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.add(egui::Label::new(egui::RichText::new(pk).monospace()).truncate()).on_hover_text(pk);
+                            });
                         }
                     });
-                } else if ui.button("Delete").clicked() {
-                    app.secrets_ui.confirm_delete = Some(m.id);
-                }
-                ui.end_row();
-            }
-        });
+                });
+            });
+        }
     });
 
     if changed {
