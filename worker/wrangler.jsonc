@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lzssh-mailbox",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "routes": [{ "pattern": "lzssh.thelukez.com", "custom_domain": true }],
+  "durable_objects": {
+    "bindings": [{ "name": "MAILBOX", "class_name": "Mailbox" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }],
+  "observability": { "enabled": true }
+  // Secret ACCESS_TOKEN: set with `pnpm wrangler secret put ACCESS_TOKEN` (never commit it).
+}
