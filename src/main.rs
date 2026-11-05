@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(dead_code)]
 mod connect;
+mod device;
 mod dpapi;
 mod keys;
 mod model;
