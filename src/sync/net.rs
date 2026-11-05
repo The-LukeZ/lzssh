@@ -1,5 +1,5 @@
 //! iroh networking: pairing (ALPN_PAIR) and push sync (ALPN_SYNC) on a background tokio runtime.
-use super::code::{self, PairCode};
+use super::code_v1::{self as code, PairCode};
 use super::payload::Payload;
 use crate::device::PairedDevice;
 use iroh::address_lookup::MemoryLookup;
