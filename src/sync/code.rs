@@ -31,11 +31,22 @@ fn check_token(t: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn encode(c: &PairCode) -> String {
+/// Checks that a server URL and token can go into a pairing code.
+pub fn validate(token: &str, server: &str) -> anyhow::Result<()> {
+    check_token(token)?;
+    check_server(server)
+}
+
+pub fn encode(c: &PairCode) -> anyhow::Result<String> {
+    validate(&c.token, &c.server)?;
+    Ok(encode_unchecked(c))
+}
+
+fn encode_unchecked(c: &PairCode) -> String {
     let mut raw = Vec::with_capacity(FIXED + c.token.len() + c.server.len());
     raw.extend_from_slice(&c.device);
     raw.extend_from_slice(&c.secret);
-    raw.push(u8::try_from(c.token.len()).expect("token is at most 255 bytes"));
+    raw.push(c.token.len().min(255) as u8);
     raw.extend_from_slice(c.token.as_bytes());
     raw.extend_from_slice(c.server.as_bytes());
     let b32 = BASE32_NOPAD.encode(&raw);
@@ -53,8 +64,7 @@ pub fn decode(s: &str) -> anyhow::Result<PairCode> {
     ensure!(token_len > 0 && token_len < rest.len(), "Pairing code is damaged");
     let token = std::str::from_utf8(&rest[..token_len]).context("Pairing code is damaged")?.to_string();
     let server = std::str::from_utf8(&rest[token_len..]).context("Pairing code is damaged")?.to_string();
-    check_token(&token)?;
-    check_server(&server)?;
+    validate(&token, &server)?;
     Ok(PairCode {
         device: raw[..32].try_into().expect("length checked"),
         secret: raw[32..48].try_into().expect("length checked"),
@@ -74,7 +84,7 @@ mod tests {
     #[test]
     fn code_roundtrip_and_tolerant() {
         let c = sample();
-        let s = encode(&c);
+        let s = encode(&c).unwrap();
         assert!(s.starts_with("LZ2-"));
         assert_eq!(decode(&s).unwrap(), c);
         let messy = format!("  {}\n", s.to_lowercase().replace('-', " - ").replace("lz2 - ", "lz2-\r\n"));
@@ -83,7 +93,7 @@ mod tests {
 
     #[test]
     fn missing_prefix_errors() {
-        let s = encode(&sample());
+        let s = encode(&sample()).unwrap();
         assert!(decode(&s[4..]).is_err());
         assert!(decode("LZ2-AAAA").is_err());
         assert!(decode("").is_err());
@@ -92,17 +102,23 @@ mod tests {
     #[test]
     fn bad_server_rejected() {
         let local = PairCode { server: "http://127.0.0.1:8787".into(), ..sample() };
-        assert_eq!(decode(&encode(&local)).unwrap(), local);
+        assert_eq!(decode(&encode(&local).unwrap()).unwrap(), local);
         for r in ["http://evil.example/", "http://127.0.0.1.evil.example/", "http://localhost.evil/", "file:///c:/x", &format!("https://{}.example/", "a".repeat(300)), "https://"] {
             let c = PairCode { server: r.to_string(), ..sample() };
-            assert!(decode(&encode(&c)).is_err(), "{r}");
+            assert!(encode(&c).is_err(), "{r}");
+            assert!(decode(&encode_unchecked(&c)).is_err(), "{r}");
         }
     }
 
     #[test]
     fn token_length_checked() {
         let c = PairCode { token: String::new(), ..sample() };
-        assert!(decode(&encode(&c)).is_err());
+        assert!(encode(&c).is_err());
+        assert!(decode(&encode_unchecked(&c)).is_err());
+        // Longer than the one length byte can hold, or with a space: refused instead of panicking.
+        assert!(encode(&PairCode { token: "a".repeat(344), ..sample() }).is_err());
+        assert!(encode(&PairCode { token: "a b".into(), ..sample() }).is_err());
+        assert!(validate("a".repeat(255).as_str(), "https://x.example").is_ok());
         // token_len byte pointing past the end
         let mut raw = vec![7u8; 32];
         raw.extend_from_slice(&[9u8; 16]);
@@ -113,7 +129,7 @@ mod tests {
 
     #[test]
     fn groups_of_five() {
-        let s = encode(&sample());
+        let s = encode(&sample()).unwrap();
         assert!(s[4..].split('-').all(|g| g.len() <= 5 && !g.is_empty()));
     }
 }

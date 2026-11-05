@@ -63,7 +63,7 @@ fn server_section(app: &mut LzApp, ui: &mut egui::Ui) {
     });
     let url_t = url.trim().trim_end_matches('/').to_string();
     let token = if st.server_token.trim().is_empty() { current.as_ref().map(|c| c.token.clone()) } else { Some(st.server_token.trim().to_string()) };
-    let valid = url_t.starts_with("https://") && token.is_some();
+    let valid = token.as_deref().is_some_and(|t| crate::sync::code::validate(t, &url_t).is_ok());
     let changed = current.as_ref().map(|c| (&c.url, Some(&c.token))) != Some((&url_t, token.as_ref()));
     let mut save = None;
     ui.horizontal(|ui| {

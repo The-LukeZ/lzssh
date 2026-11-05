@@ -116,8 +116,9 @@ export class Mailbox extends DurableObject<Env> {
     if (deny) return deny;
     const now = nowSec();
     if (typeof hash !== "string" || !HEX_ID.test(hash) || typeof expires !== "number" || !Number.isInteger(expires)) return BAD;
-    if (expires <= now || expires > now + MAX_TICKET_SEC) return BAD;
-    this.sql.exec("INSERT OR REPLACE INTO pairing (k, hash, expires) VALUES (1, ?, ?)", hash, expires);
+    if (expires <= now) return BAD;
+    // Clamp rather than reject: the client's clock may run a little ahead of ours.
+    this.sql.exec("INSERT OR REPLACE INTO pairing (k, hash, expires) VALUES (1, ?, ?)", hash, Math.min(expires, now + MAX_TICKET_SEC));
     return { status: 204 };
   }
 

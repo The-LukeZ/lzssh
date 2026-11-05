@@ -36,6 +36,8 @@ pub trait Transport: Send + 'static {
     fn set_pairing(&self, ticket_hash: [u8; 32], expires: u64) -> Result<(), TransportError>;
 }
 
+const MAX_RESPONSE: u64 = 32 * 1024 * 1024;
+
 pub fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -105,7 +107,8 @@ impl HttpTransport {
         }
         .map_err(net)?;
         let status = resp.status().as_u16();
-        let text = resp.body_mut().read_to_string().unwrap_or_default();
+        // A full mailbox lists up to 20 MiB; ureq's default read limit is 10 MB.
+        let text = resp.body_mut().with_config().limit(MAX_RESPONSE).read_to_string().map_err(net)?;
         if (200..300).contains(&status) { Ok(text) } else { Err(map_status(status, &text)) }
     }
 
@@ -275,10 +278,10 @@ mod mem {
 
         fn set_pairing(&self, ticket_hash: [u8; 32], expires: u64) -> Result<(), TransportError> {
             self.with(|s, now| {
-                if expires <= now || expires > now + 600 {
+                if expires <= now {
                     return Err(TransportError::Server("HTTP 400".into()));
                 }
-                s.boxes.entry(self.me.clone()).or_default().pairing = Some((ticket_hash, expires));
+                s.boxes.entry(self.me.clone()).or_default().pairing = Some((ticket_hash, expires.min(now + 600)));
                 Ok(())
             })
         }
@@ -326,6 +329,30 @@ mod tests {
         assert_eq!(map_status(500, ""), TransportError::Server("HTTP 500".into()));
         assert!(TransportError::Clock.to_string().contains("clock"));
         assert!(TransportError::Forbidden.to_string().contains("pair again"));
+    }
+
+    /// A full mailbox (up to 20 MiB) must still list; ureq's default read limit is 10 MB.
+    #[test]
+    fn list_reads_large_response() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = format!("{{\"messages\":[]{}}}", " ".repeat(12 * 1024 * 1024));
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            let head = format!("HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+", body.len());
+            s.write_all(head.as_bytes()).unwrap();
+            s.write_all(body.as_bytes()).unwrap();
+        });
+        let t = HttpTransport::new(&format!("http://127.0.0.1:{port}"), "t", keys(1));
+        assert_eq!(t.list(), Ok(vec![]));
     }
 
     #[test]

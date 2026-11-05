@@ -95,9 +95,13 @@ describe("mailbox", () => {
     expect((await post(b, a, envelope(b, a, "payload"), ticket)).status).toBe(403);
   });
 
-  it("pairing expiry beyond 600 s gives 400", async () => {
+  it("pairing expiry beyond 600 s is clamped (client clock may run ahead); past expiry gives 400", async () => {
     const a = await newDevice();
-    expect((await newTicket(a, now() + 601 + 5)).status).toBe(400);
+    expect((await newTicket(a, now() + 3600)).status).toBe(204);
+    await runInDurableObject(stubOf(a), async (_i, state) => {
+      const { expires } = state.storage.sql.exec<{ expires: number }>("SELECT expires FROM pairing").one();
+      expect(expires).toBeLessThanOrEqual(now() + 600);
+    });
     expect((await newTicket(a, now() - 1)).status).toBe(400);
   });
 

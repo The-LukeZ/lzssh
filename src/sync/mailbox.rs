@@ -8,7 +8,7 @@ use data_encoding::BASE64;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -20,6 +20,8 @@ pub const MAX_ENVELOPE: usize = 1024 * 1024;
 const POLL_SLOW: Duration = Duration::from_secs(20);
 const POLL_FAST: Duration = Duration::from_secs(2);
 const NO_SERVER: &str = "Set the sync server on the Devices screen.";
+/// The ticket expires this much before the local code, so a PC clock running ahead still gets a valid ticket.
+const CLOCK_MARGIN: u64 = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
@@ -79,8 +81,8 @@ pub struct Core<T: Transport> {
     make: MakeTransport<T>,
     /// Secret behind the code currently shown, and when it was created.
     pending: Option<([u8; 16], u64)>,
-    /// Devices we sent a pair_request to and expect a pair_accept from.
-    awaiting: HashSet<String>,
+    /// Devices we sent a pair_request to (and when) and expect a pair_accept from.
+    awaiting: HashMap<String, u64>,
     /// Payloads handed to the UI and not yet acknowledged.
     emitted: HashSet<String>,
     last_error: Option<String>,
@@ -89,7 +91,7 @@ pub struct Core<T: Transport> {
 impl<T: Transport> Core<T> {
     pub fn new(keys: DeviceKeys, name: String, paired: Arc<RwLock<Vec<PairedDevice>>>, server: Option<ServerConfig>, make: MakeTransport<T>) -> Self {
         let transport = server.as_ref().map(|s| make(s, keys.clone()));
-        Core { keys, name, paired, server, transport, make, pending: None, awaiting: HashSet::new(), emitted: HashSet::new(), last_error: None }
+        Core { keys, name, paired, server, transport, make, pending: None, awaiting: HashMap::new(), emitted: HashSet::new(), last_error: None }
     }
 
     pub fn id(&self) -> String {
@@ -147,25 +149,27 @@ impl<T: Transport> Core<T> {
             return out;
         };
         let secret: [u8; 16] = crate::vault::random();
-        match t.set_pairing(Sha256::digest(ticket_for(&secret)).into(), now + PAIR_TTL) {
-            Ok(()) => {
+        let code = code::encode(&PairCode { device: self.keys.public(), secret, token: server.token, server: server.url });
+        let r = code.and_then(|c| Ok((t.set_pairing(Sha256::digest(ticket_for(&secret)).into(), now + PAIR_TTL - CLOCK_MARGIN)?, c)));
+        match r {
+            Ok(((), c)) => {
                 self.pending = Some((secret, now));
-                out.push(NetEvent::PairCode(code::encode(&PairCode { device: self.keys.public(), secret, token: server.token, server: server.url })));
+                out.push(NetEvent::PairCode(c));
             }
             Err(e) => out.push(NetEvent::Error(format!("Could not start pairing: {e}"))),
         }
         out
     }
 
-    pub fn enter_code(&mut self, code_str: &str) -> Vec<NetEvent> {
+    pub fn enter_code(&mut self, code_str: &str, now: u64) -> Vec<NetEvent> {
         let mut out = Vec::new();
-        if let Err(e) = self.try_enter_code(code_str, &mut out) {
+        if let Err(e) = self.try_enter_code(code_str, now, &mut out) {
             out.push(NetEvent::Error(format!("Pairing failed: {e}")));
         }
         out
     }
 
-    fn try_enter_code(&mut self, code_str: &str, out: &mut Vec<NetEvent>) -> anyhow::Result<()> {
+    fn try_enter_code(&mut self, code_str: &str, now: u64, out: &mut Vec<NetEvent>) -> anyhow::Result<()> {
         let c = code::decode(code_str)?;
         let peer = hex::encode(c.device);
         parse_id(&peer)?;
@@ -182,7 +186,7 @@ impl<T: Transport> Core<T> {
         let hello = PairHello { name: self.name.clone(), mac: BASE64.encode(&mac) };
         let env = seal(&self.keys, &peer, Kind::PairRequest, &serde_json::to_vec(&hello)?)?;
         t.post(&env, Some(&ticket_for(&c.secret)))?;
-        self.awaiting.insert(peer);
+        self.awaiting.insert(peer, now);
         Ok(())
     }
 
@@ -217,6 +221,7 @@ impl<T: Transport> Core<T> {
         if self.pending.is_some_and(|(_, at)| now > at + PAIR_TTL) {
             self.pending = None;
         }
+        self.awaiting.retain(|_, at| now <= *at + PAIR_TTL);
         let Some(t) = self.transport_or_report(&mut out) else { return out };
         let msgs = match t.list() {
             Ok(m) => m,
@@ -270,7 +275,7 @@ impl<T: Transport> Core<T> {
                 false
             }
             Kind::PairAccept => {
-                if !self.awaiting.remove(&env.from) {
+                if self.awaiting.remove(&env.from).is_none() {
                     return false;
                 }
                 let Ok(hello) = serde_json::from_slice::<PairHello>(&plain) else { return false };
@@ -280,11 +285,18 @@ impl<T: Transport> Core<T> {
                 false
             }
             Kind::Payload => {
-                if !self.is_paired(&env.from) {
-                    return false;
-                }
-                let Ok(payload) = serde_json::from_slice::<Payload>(&plain) else { return false };
+                // Never drop data silently: keep it in the mailbox and say so once per session.
                 self.emitted.insert(env.id.clone());
+                if !self.is_paired(&env.from) {
+                    let who = crate::device::short_id(&env.from, 8);
+                    out.push(NetEvent::Error(format!("Device {who} sent data, but it is not paired with this device. Pair again to receive it.")));
+                    return true;
+                }
+                let Ok(payload) = serde_json::from_slice::<Payload>(&plain) else {
+                    let name = self.paired.read().expect("paired lock").iter().find(|d| d.node_id == env.from).map(|d| d.name.clone()).unwrap_or_default();
+                    out.push(NetEvent::Error(format!("Could not read data from {name}. Update lzssh on both devices; the data stays in the mailbox.")));
+                    return true;
+                };
                 out.push(NetEvent::Received { id: env.id.clone(), from: env.from.clone(), payload });
                 true
             }
@@ -316,7 +328,7 @@ impl<T: Transport> Core<T> {
     pub fn handle_cmd(&mut self, cmd: NetCmd) -> Vec<NetEvent> {
         match cmd {
             NetCmd::StartPairing => self.start_pairing(unix_now()),
-            NetCmd::EnterCode(c) => self.enter_code(&c),
+            NetCmd::EnterCode(c) => self.enter_code(&c, unix_now()),
             NetCmd::Send { to, payload } => self.send(&to, &payload),
             NetCmd::Ack(id) => self.ack(&id),
             NetCmd::Unpair(id) => self.unpair(&id),
@@ -412,7 +424,7 @@ mod tests {
 
     fn pair(a: &mut Core<MemTransport>, b: &mut Core<MemTransport>) {
         let c = code_of(a.start_pairing(T0));
-        assert!(b.enter_code(&c).is_empty());
+        assert!(b.enter_code(&c, T0).is_empty());
         assert_eq!(paired_names(&a.poll(T0 + 1)), vec![(b.id(), "B".to_string())]);
         assert_eq!(paired_names(&b.poll(T0 + 2)), vec![(a.id(), "A".to_string())]);
     }
@@ -450,7 +462,7 @@ mod tests {
         let mut c = code::decode(&code_of(a.start_pairing(T0))).unwrap();
         c.secret[0] ^= 1;
         // Wrong S also means a wrong ticket: the server refuses it.
-        assert!(matches!(b.enter_code(&code::encode(&c)).as_slice(), [NetEvent::Error(_)]));
+        assert!(matches!(b.enter_code(&code::encode(&c).unwrap(), T0).as_slice(), [NetEvent::Error(_)]));
         assert!(paired_names(&a.poll(T0 + 1)).is_empty());
         assert!(a.paired.read().unwrap().is_empty());
     }
@@ -475,7 +487,7 @@ mod tests {
         srv.set_now(T0);
         let (mut a, mut b) = (core(&srv, "A"), core(&srv, "B"));
         let c = code_of(a.start_pairing(T0));
-        assert!(b.enter_code(&c).is_empty());
+        assert!(b.enter_code(&c, T0).is_empty());
         assert!(paired_names(&a.poll(T0 + PAIR_TTL + 1)).is_empty());
         assert!(a.paired.read().unwrap().is_empty());
         assert!(!a.fast_poll());
@@ -487,9 +499,9 @@ mod tests {
         srv.set_now(T0);
         let (mut a, mut b, mut c) = (core(&srv, "A"), core(&srv, "B"), core(&srv, "C"));
         let code = code_of(a.start_pairing(T0));
-        assert!(b.enter_code(&code).is_empty());
+        assert!(b.enter_code(&code, T0).is_empty());
         assert_eq!(paired_names(&a.poll(T0 + 1)).len(), 1);
-        assert!(matches!(c.enter_code(&code).as_slice(), [NetEvent::Error(e)] if e.contains("pair again")));
+        assert!(matches!(c.enter_code(&code, T0).as_slice(), [NetEvent::Error(e)] if e.contains("pair again")));
         assert!(a.poll(T0 + 2).is_empty());
         assert_eq!(a.paired.read().unwrap().len(), 1);
     }
@@ -578,6 +590,53 @@ mod tests {
     }
 
     #[test]
+    fn pairing_works_with_fast_client_clock() {
+        let srv = MemServer::default();
+        srv.set_now(T0);
+        let mut a = core(&srv, "A");
+        // This PC's clock runs 5 s ahead of the server's.
+        assert!(matches!(a.start_pairing(T0 + 5).as_slice(), [NetEvent::PairCode(_)]));
+    }
+
+    #[test]
+    fn undecodable_payload_kept_and_reported_once() {
+        let srv = MemServer::default();
+        srv.set_now(T0);
+        let (mut a, mut b) = (core(&srv, "A"), core(&srv, "B"));
+        pair(&mut a, &mut b);
+        let env = seal(&b.keys, &a.id(), Kind::Payload, b"{\"from_a_newer\":1}").unwrap();
+        srv.transport(&b.keys).post(&env, None).unwrap();
+        assert!(matches!(a.poll(T0 + 3).as_slice(), [NetEvent::Error(e)] if e.contains("B")));
+        assert!(a.poll(T0 + 4).is_empty());
+        assert_eq!(srv.transport(&a.keys).list().unwrap().len(), 1, "kept in the mailbox");
+    }
+
+    #[test]
+    fn payload_from_unpaired_sender_kept_and_reported_once() {
+        let srv = MemServer::default();
+        srv.set_now(T0);
+        let (mut a, mut c) = (core(&srv, "A"), core(&srv, "C"));
+        // A allowed C on the server (e.g. A entered C's code) but never got C's accept.
+        srv.transport(&a.keys).allow(&c.id()).unwrap();
+        assert!(matches!(c.send(&a.id(), &payload("h")).as_slice(), [NetEvent::Sent { .. }]));
+        assert!(matches!(a.poll(T0 + 1).as_slice(), [NetEvent::Error(e)] if e.contains("pair")));
+        assert!(a.poll(T0 + 2).is_empty());
+        assert_eq!(srv.transport(&a.keys).list().unwrap().len(), 1, "kept in the mailbox");
+    }
+
+    #[test]
+    fn unanswered_pairing_stops_fast_polling() {
+        let srv = MemServer::default();
+        srv.set_now(T0);
+        let (mut a, mut b) = (core(&srv, "A"), core(&srv, "B"));
+        let c = code_of(a.start_pairing(T0));
+        assert!(b.enter_code(&c, T0).is_empty());
+        assert!(b.fast_poll());
+        b.poll(T0 + PAIR_TTL + 1);
+        assert!(!b.fast_poll(), "A never answered; stop polling every 2 s");
+    }
+
+    #[test]
     fn code_from_other_server_switches_server() {
         let srv = MemServer::default();
         srv.set_now(T0);
@@ -585,7 +644,7 @@ mod tests {
         let s = srv.clone();
         let mut b: Core<MemTransport> =
             Core::new(DeviceKeys::from_secret(&[4; 32]), "B".into(), Arc::new(RwLock::new(Vec::new())), None, Box::new(move |_, k| s.transport(&k)));
-        let evs = b.enter_code(&code_of(a.start_pairing(T0)));
+        let evs = b.enter_code(&code_of(a.start_pairing(T0)), T0);
         assert!(matches!(evs.as_slice(), [NetEvent::ServerChanged(c)] if c.url == URL && c.token == "tok"));
         assert_eq!(paired_names(&a.poll(T0 + 1)).len(), 1);
     }
@@ -604,7 +663,7 @@ mod tests {
         };
         let (mut a, mut b) = (mk("A"), mk("B"));
         let c = code_of(a.start_pairing(unix_now()));
-        assert!(b.enter_code(&c).is_empty());
+        assert!(b.enter_code(&c, unix_now()).is_empty());
         assert_eq!(paired_names(&a.poll(unix_now())), vec![(b.id(), "B".to_string())]);
         assert_eq!(paired_names(&b.poll(unix_now())), vec![(a.id(), "A".to_string())]);
         assert!(matches!(b.send(&a.id(), &payload("live")).as_slice(), [NetEvent::Sent { .. }]));
