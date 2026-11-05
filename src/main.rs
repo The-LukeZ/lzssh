@@ -5,6 +5,7 @@ mod dpapi;
 mod keys;
 mod model;
 mod paths;
+mod sync;
 mod ui;
 mod vault;
 
