@@ -11,7 +11,7 @@ variables:
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+.*$/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$/
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # Unit tests need real Windows (DPAPI, named pipes, icacls).
@@ -19,9 +19,10 @@ test:windows:
   stage: test
   tags: [saas-windows-medium-amd64]
   cache:
-    key: cargo-windows
+    key: cargo-windows-$CI_COMMIT_REF_SLUG  # per ref: tag builds never reuse another ref's cache
     paths: [target/]
   script:
+    # Accepted risk: official rustup installer over HTTPS, not hash-pinned.
     - Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
     - .\rustup-init.exe -y --profile minimal --default-toolchain stable
     - $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
@@ -32,7 +33,7 @@ build:windows:
   stage: build
   image: messense/cargo-xwin@sha256:9856b895265d4966f212228ba64802cf89337e2a2a537aa2533c1b8784cbc81b
   cache:
-    key: cargo-xwin
+    key: cargo-xwin-$CI_COMMIT_REF_SLUG  # per ref: tag builds never reuse another ref's cache
     paths: [target/, .xwin-cache/]
   variables:
     XWIN_CACHE_DIR: "${CI_PROJECT_DIR}/.xwin-cache"
@@ -59,7 +60,7 @@ upload:
   image: curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
   needs: [build:windows, test:windows]
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"
   script:
     - |
       curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$ZIP" "${PACKAGE_REGISTRY_URL}/${CI_COMMIT_TAG}/${ZIP}"
@@ -69,7 +70,7 @@ release:
   image: registry.gitlab.com/gitlab-org/cli@sha256:00884510ffcbb6b03c0abc5dd058d7728a646cab2a419de4a7108d073ce90a03
   needs: [build:windows, upload]
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"
   script:
     - echo "Releasing $CI_COMMIT_TAG with $ZIP"
   release:
