@@ -61,3 +61,7 @@ Forgetting the PIN means the vault cannot be recovered. Back up the folder if yo
 ## Releases
 
 Pushing a tag like `v0.1.0` builds the binaries on GitHub Actions and attaches them to a GitHub Release.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
