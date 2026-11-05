@@ -49,7 +49,9 @@ pub fn build_payload(store: &Store, vault: &Vault, folders: &[FolderSel], secret
 }
 
 pub fn apply_payload(store: &mut Store, vault: &mut Vault, p: Payload) -> Result<ApplySummary, VaultError> {
-    let summary = ApplySummary { hosts: p.hosts.len(), secrets: p.secrets.len() };
+    // Hosts that would fail validation are dropped: their fields reach the ssh command line.
+    let hosts: Vec<Host> = p.hosts.into_iter().filter(|h| h.validate().is_ok()).collect();
+    let summary = ApplySummary { hosts: hosts.len(), secrets: p.secrets.len() };
     for s in p.secrets {
         vault.upsert(s)?;
     }
@@ -59,7 +61,7 @@ pub fn apply_payload(store: &mut Store, vault: &mut Vault, p: Payload) -> Result
             None => store.folders.push(f),
         }
     }
-    for h in p.hosts {
+    for h in hosts {
         match store.hosts.iter_mut().find(|x| x.id == h.id) {
             Some(x) => *x = h,
             None => store.hosts.push(h),
@@ -119,6 +121,18 @@ mod tests {
         assert_eq!(store.folders[0].name, "production");
         assert!(store.hosts.contains(&local));
         assert!(store.hosts.contains(&h));
+    }
+
+    #[test]
+    fn invalid_incoming_hosts_skipped() {
+        let d = tempfile::tempdir().unwrap();
+        let mut bad = host("evil", None, Uuid::nil());
+        bad.username = "-oProxyCommand=calc".into();
+        let good = host("ok", None, Uuid::nil());
+        let mut store = Store::default();
+        let s = apply_payload(&mut store, &mut vault(d.path(), "111111"), Payload { folders: vec![], hosts: vec![bad, good.clone()], secrets: vec![] }).unwrap();
+        assert_eq!(s.hosts, 1);
+        assert_eq!(store.hosts, vec![good]);
     }
 
     #[test]

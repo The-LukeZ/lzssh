@@ -29,6 +29,11 @@ pub fn decode(s: &str) -> anyhow::Result<PairCode> {
         bail!("Pairing code is too short");
     }
     let relay = std::str::from_utf8(&raw[64..]).context("Pairing code is damaged")?;
+    if !relay.is_empty() {
+        let host = relay.strip_prefix("https://").context("Pairing code has an invalid relay address")?;
+        let ok = relay.len() <= 200 && host.chars().all(|c| c.is_ascii_alphanumeric() || ".-/:".contains(c));
+        anyhow::ensure!(ok, "Pairing code has an invalid relay address");
+    }
     Ok(PairCode {
         node_id: raw[..32].try_into().expect("length checked"),
         secret: raw[32..64].try_into().expect("length checked"),
@@ -62,6 +67,14 @@ mod tests {
         assert!(decode(&s[4..]).is_err());
         assert!(decode("LZ1-AAAA").is_err());
         assert!(decode("").is_err());
+    }
+
+    #[test]
+    fn bad_relay_rejected() {
+        for r in ["http://evil.example/", "file:///c:/x", &format!("https://{}.example/", "a".repeat(300))] {
+            let c = PairCode { relay_url: Some(r.to_string()), ..sample() };
+            assert!(decode(&encode(&c)).is_err(), "{r}");
+        }
     }
 
     #[test]

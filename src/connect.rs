@@ -25,6 +25,8 @@ pub enum ConnectError {
     NoAddress,
     #[error("Secret missing")]
     SecretMissing,
+    #[error("{0}")]
+    Invalid(String),
     #[error("Key error: {0}")]
     Key(String),
     #[error("Could not open terminal: {0}")]
@@ -32,6 +34,7 @@ pub enum ConnectError {
 }
 
 pub fn prepare_connect(host: &Host, vault: &Vault, run_dir: &Path, prefer_v6: bool) -> Result<SshInvocation, ConnectError> {
+    host.validate().map_err(|e| ConnectError::Invalid(e.to_string()))?;
     let addr = host.target(prefer_v6).ok_or(ConnectError::NoAddress)?;
     let secret = vault.get(host.auth.secret_id()).map_err(|e| match e {
         VaultError::NotFound => ConnectError::SecretMissing,
@@ -47,7 +50,8 @@ pub fn prepare_connect(host: &Host, vault: &Vault, run_dir: &Path, prefer_v6: bo
             args.extend(["-o".into(), "PreferredAuthentications=password,keyboard-interactive".into()]);
         }
     }
-    args.extend(["-p".into(), host.port.to_string(), format!("{}@{}", host.username.trim(), addr)]);
+    // "--" ends option parsing, so the destination can never be read as an ssh option.
+    args.extend(["-p".into(), host.port.to_string(), "--".into(), format!("{}@{}", host.username.trim(), addr)]);
     Ok(SshInvocation { program: SSH_EXE.into(), args, env: vec![] })
 }
 
@@ -223,7 +227,7 @@ mod tests {
         let inv = prepare_connect(&host(Auth::Key { secret_id: s.id }), &v, d.path(), false).unwrap();
         assert_eq!(inv.program, SSH_EXE);
         let key = d.path().join(s.id.to_string()).to_string_lossy().to_string();
-        assert_eq!(inv.args, vec!["-i", key.as_str(), "-o", "IdentitiesOnly=yes", "-p", "2222", "luke@10.0.0.5"]);
+        assert_eq!(inv.args, vec!["-i", key.as_str(), "-o", "IdentitiesOnly=yes", "-p", "2222", "--", "luke@10.0.0.5"]);
         assert!(inv.env.is_empty());
     }
 
@@ -258,7 +262,7 @@ mod tests {
         let s = secret(SecretKind::Password, b"pw");
         let v = vault_with(&s, d.path());
         let inv = prepare_connect(&host(Auth::Password { secret_id: s.id }), &v, d.path(), false).unwrap();
-        assert_eq!(inv.args, vec!["-o", "PreferredAuthentications=password,keyboard-interactive", "-p", "2222", "luke@10.0.0.5"]);
+        assert_eq!(inv.args, vec!["-o", "PreferredAuthentications=password,keyboard-interactive", "-p", "2222", "--", "luke@10.0.0.5"]);
     }
 
     #[test]

@@ -45,6 +45,18 @@ pub enum HostError {
     NoName,
     #[error("Port must be 1-65535")]
     BadPort,
+    #[error("Address contains invalid characters")]
+    BadAddress,
+    #[error("Username contains invalid characters")]
+    BadUsername,
+    #[error("Name must not contain quotes or control characters")]
+    BadName,
+}
+
+/// Values end up on the ssh.exe / wt.exe command line, possibly from a synced payload.
+/// Reject anything that could be read as an option or break quoting.
+fn safe_token(s: &str, extra: &[char]) -> bool {
+    !s.starts_with('-') && s.chars().all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c) || extra.contains(&c))
 }
 
 fn set(v: &Option<String>) -> Option<&str> {
@@ -64,6 +76,16 @@ impl Host {
         }
         if self.port == 0 {
             return Err(HostError::BadPort);
+        }
+        if self.name.chars().any(|c| c == '"' || c.is_control()) {
+            return Err(HostError::BadName);
+        }
+        let addr_ok = |v: &Option<String>| set(v).is_none_or(|a| safe_token(a, &[':', '%', '[', ']']));
+        if !addr_ok(&self.ipv4) || !addr_ok(&self.ipv6) {
+            return Err(HostError::BadAddress);
+        }
+        if !safe_token(self.username.trim(), &['@', '\\']) {
+            return Err(HostError::BadUsername);
         }
         Ok(())
     }
@@ -130,6 +152,17 @@ mod tests {
     #[test] fn validate_empty_strings_are_unset() { let mut h = sample(); h.ipv4 = Some("  ".into()); h.ipv6 = Some("".into()); assert_eq!(h.validate(), Err(HostError::NoAddress)); }
     #[test] fn validate_requires_username() { let mut h = sample(); h.username = "  ".into(); assert_eq!(h.validate(), Err(HostError::NoUsername)); }
     #[test] fn validate_rejects_port_zero() { let mut h = sample(); h.port = 0; assert_eq!(h.validate(), Err(HostError::BadPort)); }
+    #[test] fn validate_rejects_option_injection() {
+        let mut h = sample(); h.username = "-oProxyCommand=calc".into(); assert_eq!(h.validate(), Err(HostError::BadUsername));
+        let mut h = sample(); h.username = "a b".into(); assert_eq!(h.validate(), Err(HostError::BadUsername));
+        let mut h = sample(); h.ipv4 = Some("-oProxyCommand=calc".into()); assert_eq!(h.validate(), Err(HostError::BadAddress));
+        let mut h = sample(); h.ipv4 = Some("host&calc".into()); assert_eq!(h.validate(), Err(HostError::BadAddress));
+        let mut h = sample(); h.name = "a\"b".into(); assert_eq!(h.validate(), Err(HostError::BadName));
+    }
+    #[test] fn validate_accepts_normal_values() {
+        let mut h = sample(); h.username = r"DOMAIN\luke.h_2@corp".into(); h.ipv4 = Some("web-01.example.com".into()); h.ipv6 = Some("[fe80::1%3]".into());
+        assert_eq!(h.validate(), Ok(()));
+    }
     #[test] fn validate_ok() { assert_eq!(sample().validate(), Ok(())); }
     #[test] fn target_prefers_ipv4() { let h = sample_both(); assert_eq!(h.target(false).unwrap(), "10.0.0.5"); assert_eq!(h.target(true).unwrap(), "2001:db8::1"); }
     #[test] fn ipv6_only_used_when_no_ipv4() { let mut h = sample_both(); h.ipv4 = None; assert_eq!(h.target(false).unwrap(), "2001:db8::1"); }
