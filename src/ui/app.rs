@@ -46,13 +46,10 @@ impl LzApp {
         let data = paths::data_dir();
         let hosts_path = data.join("hosts.json");
         let mut toasts = Vec::new();
-        let store = match Store::load(&hosts_path) {
-            Ok(s) => s,
-            Err(e) => {
-                toasts.push((format!("Could not read hosts.json: {e}"), Instant::now()));
-                Store::default()
-            }
-        };
+        let (store, warning) = Store::load_or_backup(&hosts_path);
+        if let Some(w) = warning {
+            toasts.push((w, Instant::now()));
+        }
         LzApp {
             store,
             vault: None,
@@ -123,7 +120,7 @@ impl LzApp {
     }
 
     pub fn device_name(&self, node_id: &str) -> String {
-        self.paired.read().expect("paired lock").iter().find(|d| d.node_id == node_id).map(|d| d.name.clone()).unwrap_or_else(|| format!("{}…", &node_id[..node_id.len().min(8)]))
+        self.paired.read().expect("paired lock").iter().find(|d| d.node_id == node_id).map(|d| d.name.clone()).unwrap_or_else(|| format!("{}…", crate::device::short_id(node_id, 8)))
     }
 
     pub fn send_cmd(&mut self, c: NetCmd) {

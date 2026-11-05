@@ -11,6 +11,11 @@ pub struct PairedDevice {
     pub name: String,
 }
 
+/// First `n` characters of an ID for display; safe on any string.
+pub fn short_id(id: &str, n: usize) -> String {
+    id.chars().take(n).collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct Device {
     pub secret_key: [u8; 32],
@@ -75,5 +80,12 @@ mod tests {
         let raw = std::fs::read(&p).unwrap();
         assert!(!raw.windows(32).any(|w| w == a.secret_key));
         assert!(!String::from_utf8_lossy(&raw).contains(&hex::encode(a.secret_key)));
+    }
+
+    #[test]
+    fn short_id_never_panics() {
+        assert_eq!(short_id("abcdef0123456789ff", 8), "abcdef01");
+        assert_eq!(short_id("ab", 8), "ab");
+        assert_eq!(short_id("äöüäöüäöüä", 3), "äöü");
     }
 }

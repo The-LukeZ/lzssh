@@ -9,7 +9,21 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::ServerOptions;
 pub use zeroize::Zeroizing;
 
-pub const PIPE_NAME: &str = r"\\.\pipe\lzssh-askpass";
+/// Per-user pipe name, so other Windows users on the machine neither collide nor squat it.
+pub fn pipe_name_for(domain: &str, user: &str) -> String {
+    let clean = |s: &str| s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect::<String>();
+    format!(r"\\.\pipe\lzssh-askpass-{}-{}", clean(domain), clean(user))
+}
+
+pub fn pipe_name() -> String {
+    pipe_name_for(&std::env::var("USERDOMAIN").unwrap_or_default(), &std::env::var("USERNAME").unwrap_or_default())
+}
+
+/// Only password prompts get the stored password; host-key questions etc. go to the user.
+pub fn is_password_prompt(prompt: &str) -> bool {
+    let p = prompt.to_ascii_lowercase();
+    p.contains("password") && !p.contains("passphrase") && !p.contains("yes/no")
+}
 const TOKEN_TTL: Duration = Duration::from_secs(60);
 
 /// token -> (password, issued at). Single use, expires after 60 s.
@@ -56,7 +70,7 @@ pub async fn serve_on(name: String, reg: Registry) -> anyhow::Result<()> {
 }
 
 pub async fn serve(reg: Registry) -> anyhow::Result<()> {
-    serve_on(PIPE_NAME.to_string(), reg).await
+    serve_on(pipe_name(), reg).await
 }
 
 /// Start the pipe server on its own thread/runtime. Returns the registry to register passwords in.
@@ -95,10 +109,30 @@ pub fn request(pipe: &str, token: &str) -> anyhow::Result<Zeroizing<String>> {
     Ok(Zeroizing::new(line.trim_end_matches(['\r', '\n']).to_string()))
 }
 
-/// Entry point when ssh.exe runs us as SSH_ASKPASS. Prints the password; exit 1 on failure.
+/// Ask the user on the tab's console (e.g. "continue connecting (yes/no)?").
+fn ask_console(prompt: &str) -> i32 {
+    let out = std::fs::OpenOptions::new().write(true).open("CONOUT$");
+    let inp = std::fs::OpenOptions::new().read(true).open("CONIN$");
+    let (Ok(mut out), Ok(inp)) = (out, inp) else { return 1 };
+    let _ = write!(out, "{prompt}");
+    let _ = out.flush();
+    let mut line = String::new();
+    if BufReader::new(inp).read_line(&mut line).is_err() {
+        return 1;
+    }
+    println!("{}", line.trim_end_matches(['\r', '\n']));
+    0
+}
+
+/// Entry point when ssh.exe runs us as SSH_ASKPASS (prompt in argv[1]).
+/// Prints the stored password for password prompts, asks the user for anything else.
 pub fn client_main() -> i32 {
+    let prompt = std::env::args().nth(1).unwrap_or_default();
+    if !is_password_prompt(&prompt) {
+        return ask_console(&prompt);
+    }
     let Ok(token) = std::env::var("LZSSH_ASKPASS_TOKEN") else { return 1 };
-    match request(PIPE_NAME, &token) {
+    match request(&pipe_name(), &token) {
         Ok(pw) => {
             println!("{}", pw.as_str());
             0
@@ -132,5 +166,21 @@ mod tests {
         let t = register(&reg, Zeroizing::new("x".into()));
         reg.lock().unwrap().get_mut(&t).unwrap().1 -= std::time::Duration::from_secs(61);
         assert!(take(&reg, &t).is_none());
+    }
+
+    #[test]
+    fn only_password_prompts_get_the_password() {
+        assert!(is_password_prompt("luke@10.0.0.5's password: "));
+        assert!(is_password_prompt("Password: "));
+        assert!(!is_password_prompt("Are you sure you want to continue connecting (yes/no/[fingerprint])? "));
+        assert!(!is_password_prompt("Enter passphrase for key 'x': "));
+    }
+
+    #[test]
+    fn pipe_name_is_per_user() {
+        let n = pipe_name_for("CORP", "Luke H.");
+        assert!(n.starts_with(r"\\.\pipe\lzssh-askpass-"));
+        assert!(n.ends_with("CORP-Luke_H."));
+        assert_ne!(pipe_name_for("A", "x"), pipe_name_for("B", "x"));
     }
 }

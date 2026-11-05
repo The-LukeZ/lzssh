@@ -77,7 +77,7 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
     for d in &paired {
         ui.horizontal(|ui| {
             ui.label(&d.name);
-            ui.weak(&d.node_id[..d.node_id.len().min(16)]);
+            ui.weak(crate::device::short_id(&d.node_id, 16));
             if app.devices_ui.confirm_remove.as_deref() == Some(d.node_id.as_str()) {
                 if ui.button("Really remove").clicked() {
                     remove = Some(d.node_id.clone());

@@ -12,7 +12,7 @@ pub const SSH_EXE: &str = r"C:\Windows\System32\OpenSSH\ssh.exe";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SshInvocation {
     pub program: String,
     pub args: Vec<String>,
@@ -51,7 +51,7 @@ pub fn prepare_connect(host: &Host, vault: &Vault, run_dir: &Path, prefer_v6: bo
             args.extend(["-o".into(), "PreferredAuthentications=password,keyboard-interactive".into()]);
             let pw = String::from_utf8(secret.material.to_vec()).map_err(|_| ConnectError::Key("password is not valid text".into()))?;
             let token = crate::askpass::register(reg, zeroize::Zeroizing::new(pw));
-            let exe = std::env::current_exe().map_err(|e| ConnectError::Launch(e.to_string()))?;
+            let exe = helper_exe()?;
             env.push(("SSH_ASKPASS".into(), exe.to_string_lossy().into_owned()));
             env.push(("SSH_ASKPASS_REQUIRE".into(), "force".into()));
             env.push(("LZSSH_ASKPASS".into(), "1".into()));
@@ -151,33 +151,91 @@ fn quote(arg: &str) -> String {
     s
 }
 
-/// Command line for the tab. With env vars, wrap in `cmd /c` because the tab may be
-/// hosted by an already running Windows Terminal process that does not inherit our env.
-fn tab_command_line(inv: &SshInvocation) -> String {
-    let mut cmd = std::iter::once(quote(&inv.program)).chain(inv.args.iter().map(|a| quote(a))).collect::<Vec<_>>().join(" ");
-    if !inv.env.is_empty() {
-        let sets: String = inv.env.iter().map(|(k, v)| format!("set \"{k}={v}\"&& ")).collect();
-        cmd = format!("cmd.exe /c \"{sets}{cmd}\"");
+/// Store the invocation in a user-only file in `run_dir`; the tab's helper reads and deletes it.
+/// Keeps args and env off the wt/cmd command line, so no shell quoting is involved.
+pub fn write_launch_file(inv: &SshInvocation, run_dir: &Path) -> Result<PathBuf, ConnectError> {
+    let path = run_dir.join(format!("launch-{}.json", uuid::Uuid::new_v4()));
+    let json = serde_json::to_vec(inv).map_err(|e| ConnectError::Launch(e.to_string()))?;
+    let r = std::fs::write(&path, b"")
+        .map_err(|e| ConnectError::Launch(e.to_string()))
+        .and_then(|_| restrict_acl(&path))
+        .and_then(|_| std::fs::write(&path, &json).map_err(|e| ConnectError::Launch(e.to_string())));
+    if let Err(e) = r {
+        let _ = std::fs::remove_file(&path);
+        return Err(e);
     }
-    cmd
+    Ok(path)
+}
+
+pub fn read_launch_file(path: &Path) -> anyhow::Result<SshInvocation> {
+    let bytes = std::fs::read(path);
+    let _ = std::fs::remove_file(path);
+    Ok(serde_json::from_slice(&bytes?)?)
+}
+
+/// `wt.exe` arguments: new tab running `<helper> --launch <file>`. `;` is wt's command
+/// separator even inside quotes, so every one is escaped.
+pub fn wt_command_line(title: &str, helper: &Path, launch_file: &Path) -> String {
+    format!(
+        "new-tab --title {} {} --launch {}",
+        quote(title),
+        quote(&helper.to_string_lossy()),
+        quote(&launch_file.to_string_lossy())
+    )
+    .replace(';', "\\;")
+}
+
+/// The wt process gets no extra environment: askpass env lives only in the launch file.
+pub fn wt_command(title: &str, helper: &Path, launch_file: &Path) -> Command {
+    let mut c = Command::new(wt_exe());
+    c.raw_arg(wt_command_line(title, helper, launch_file));
+    c
+}
+
+/// Path of the console helper next to the running exe.
+pub fn helper_exe() -> Result<PathBuf, ConnectError> {
+    let exe = std::env::current_exe().map_err(|e| ConnectError::Launch(e.to_string()))?;
+    Ok(exe.with_file_name("lzssh-ssh.exe"))
 }
 
 pub fn launch_in_terminal(title: &str, inv: &SshInvocation) -> Result<(), ConnectError> {
-    let line = tab_command_line(inv);
-    // wt treats ';' as a command separator; escape it so remote commands survive.
-    let wt_line = format!("new-tab --title {} {}", quote(title), line.replace(';', "\\;"));
-    let wt = Command::new(wt_exe()).raw_arg(&wt_line).envs(inv.env.iter().cloned()).spawn();
-    if wt.is_ok() {
+    let helper = helper_exe()?;
+    if !helper.exists() {
+        return Err(ConnectError::Launch(format!("{} is missing", helper.display())));
+    }
+    let file = write_launch_file(inv, &crate::paths::run_dir())?;
+    if wt_command(title, &helper, &file).spawn().is_ok() {
         return Ok(());
     }
     // Fallback: no Windows Terminal installed, open a classic console window.
-    Command::new(&inv.program)
-        .args(&inv.args)
-        .envs(inv.env.iter().cloned())
+    Command::new(&helper)
+        .arg("--launch")
+        .arg(&file)
         .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
         .map(|_| ())
-        .map_err(|e| ConnectError::Launch(e.to_string()))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&file);
+            ConnectError::Launch(e.to_string())
+        })
+}
+
+/// Helper side of `--launch`: run ssh in this console, return its exit code.
+pub fn launch_main(file: &Path) -> i32 {
+    let fail = |msg: String| {
+        eprintln!("lzssh: {msg}");
+        eprintln!("Press Enter to close.");
+        let _ = std::io::stdin().read_line(&mut String::new());
+        1
+    };
+    let inv = match read_launch_file(file) {
+        Ok(i) => i,
+        Err(e) => return fail(format!("could not read launch file: {e}")),
+    };
+    match Command::new(&inv.program).args(&inv.args).envs(inv.env.iter().cloned()).status() {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(e) => fail(format!("could not start {}: {e}", inv.program)),
+    }
 }
 
 /// Remove decrypted key files. Called on start and on exit.
@@ -329,5 +387,28 @@ mod tests {
         std::fs::write(d.path().join("x"), b"k").unwrap();
         clean_run_dir(d.path());
         assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn launch_file_roundtrip_and_deleted() {
+        let d = tempfile::tempdir().unwrap();
+        let inv = SshInvocation { program: SSH_EXE.into(), args: vec!["-p".into(), "22".into(), "--".into(), "u@h".into(), "echo 'a' >> f; x && y || z".into()], env: vec![("K".into(), "V".into())] };
+        let p = write_launch_file(&inv, d.path()).unwrap();
+        assert_eq!(read_launch_file(&p).unwrap(), inv);
+        assert!(!p.exists());
+    }
+
+    #[test]
+    fn wt_line_escapes_title_and_has_no_shell() {
+        let line = wt_command_line("prod;db x;new-tab cmd", std::path::Path::new(r"C:\Program Files\lzssh\lzssh.exe"), std::path::Path::new(r"C:\run\launch 1.json"));
+        assert!(!line.contains("cmd.exe /c"));
+        assert_eq!(line.matches(';').count(), line.matches(r"\;").count());
+        assert!(line.contains(r#""C:\Program Files\lzssh\lzssh.exe" --launch "C:\run\launch 1.json""#));
+    }
+
+    #[test]
+    fn wt_command_gets_no_askpass_env() {
+        let c = wt_command("t", std::path::Path::new("lzssh.exe"), std::path::Path::new("f.json"));
+        assert_eq!(c.get_envs().count(), 0);
     }
 }

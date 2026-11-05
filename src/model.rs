@@ -118,6 +118,21 @@ impl Store {
         }
     }
 
+    /// Load; if the file is corrupt, move it aside (never overwrite the user's hosts) and start empty.
+    pub fn load_or_backup(path: &Path) -> (Store, Option<String>) {
+        match Store::load(path) {
+            Ok(s) => (s, None),
+            Err(e) => {
+                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let name = format!("{}.bad-{ts}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+                match std::fs::rename(path, path.with_file_name(&name)) {
+                    Ok(()) => (Store::default(), Some(format!("hosts.json was unreadable ({e}); moved to {name}"))),
+                    Err(re) => (Store::default(), Some(format!("hosts.json is unreadable ({e}) and could not be moved aside ({re})"))),
+                }
+            }
+        }
+    }
+
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
@@ -175,5 +190,18 @@ mod tests {
         let s = Store { folders: vec![f], hosts: vec![h] };
         s.save(&p).unwrap();
         assert_eq!(Store::load(&p).unwrap(), s);
+    }
+
+    #[test] fn corrupt_store_is_backed_up_not_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("hosts.json");
+        std::fs::write(&p, b"{ not json").unwrap();
+        let (s, warn) = Store::load_or_backup(&p);
+        assert_eq!(s, Store::default());
+        assert!(warn.unwrap().contains("hosts.json.bad"));
+        assert!(!p.exists());
+        let backups: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("hosts.json.bad")).collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(backups[0].path()).unwrap(), b"{ not json");
     }
 }
