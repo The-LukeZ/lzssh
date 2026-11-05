@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(dead_code)]
 mod connect;
 mod dpapi;
@@ -31,10 +31,13 @@ fn main() {
     let run_dir = paths::run_dir();
     connect::clean_run_dir(&run_dir);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("lzssh").with_inner_size([1000.0, 650.0]),
+        viewport: egui::ViewportBuilder::default().with_title("lzssh").with_inner_size([1000.0, 650.0]).with_min_inner_size([700.0, 450.0]),
         ..Default::default()
     };
-    let r = eframe::run_native("lzssh", options, Box::new(|_cc| Ok(Box::new(ui::app::LzApp::new()))));
+    let r = eframe::run_native("lzssh", options, Box::new(|cc| {
+        cc.egui_ctx.set_zoom_factor(1.5);
+        Ok(Box::new(ui::app::LzApp::new()))
+    }));
     connect::clean_run_dir(&run_dir);
     if let Err(e) = r {
         let msg: Vec<u16> = format!("lzssh failed to start: {e}\0").encode_utf16().collect();
