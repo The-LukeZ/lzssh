@@ -124,9 +124,9 @@ pub fn open(me: &DeviceKeys, env: &Envelope) -> anyhow::Result<Vec<u8>> {
         .map_err(|_| anyhow::anyhow!("message could not be decrypted"))
 }
 
-/// `lzssh-req-v1\n METHOD \n PATH \n TIME \n hex(sha256(body))`, shared with the Worker.
-pub fn signing_string(method: &str, path: &str, time: u64, body: &[u8]) -> String {
-    format!("lzssh-req-v1\n{method}\n{path}\n{time}\n{}", hex::encode(Sha256::digest(body)))
+/// `lzssh-req-v1\n METHOD \n PATH \n TIME \n NONCE \n hex(sha256(body))`, shared with the Worker.
+pub fn signing_string(method: &str, path: &str, time: u64, nonce: &str, body: &[u8]) -> String {
+    format!("lzssh-req-v1\n{method}\n{path}\n{time}\n{nonce}\n{}", hex::encode(Sha256::digest(body)))
 }
 
 #[cfg(test)]
@@ -179,8 +179,8 @@ mod tests {
     #[test]
     fn signing_string_exact() {
         assert_eq!(
-            signing_string("POST", "/v1/mailbox/ab", 1700000000, b"{}"),
-            "lzssh-req-v1\nPOST\n/v1/mailbox/ab\n1700000000\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+            signing_string("POST", "/v1/mailbox/ab", 1700000000, "00112233445566778899aabbccddeeff", b"{}"),
+            "lzssh-req-v1\nPOST\n/v1/mailbox/ab\n1700000000\n00112233445566778899aabbccddeeff\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
         );
     }
 

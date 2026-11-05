@@ -67,8 +67,9 @@ describe("mailbox", () => {
   it("replay gives 409", async () => {
     const a = await newDevice();
     const t = now();
-    expect((await call(await signedRequest(a, "GET", mb(a), "", { time: t }))).status).toBe(200);
-    expect((await call(await signedRequest(a, "GET", mb(a), "", { time: t }))).status).toBe(409);
+    const nonce = "ab".repeat(16);
+    expect((await call(await signedRequest(a, "GET", mb(a), "", { time: t, nonce }))).status).toBe(200);
+    expect((await call(await signedRequest(a, "GET", mb(a), "", { time: t, nonce }))).status).toBe(409);
   });
 
   it("pair ticket accepted once, then 403", async () => {

@@ -9,8 +9,8 @@ const own = async () => {
 
 describe("request authentication", () => {
   it("signing string is exact", async () => {
-    expect(signingString("POST", "/v1/mailbox/ab", "1700000000", new TextEncoder().encode("{}"))).toBe(
-      "lzssh-req-v1\nPOST\n/v1/mailbox/ab\n1700000000\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    expect(signingString("POST", "/v1/mailbox/ab", "1700000000", "00112233445566778899aabbccddeeff", new TextEncoder().encode("{}"))).toBe(
+      "lzssh-req-v1\nPOST\n/v1/mailbox/ab\n1700000000\n00112233445566778899aabbccddeeff\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     );
   });
 
@@ -61,6 +61,19 @@ describe("request authentication", () => {
       headers.set("X-Lz-Sig", variant);
       expect((await call(new Request(req.url, { headers }))).status).not.toBe(200);
     }
+  });
+
+  it("two identical requests in the same second both pass (nonce)", async () => {
+    const { d, path } = await own();
+    const t = now();
+    expect((await call(await signedRequest(d, "GET", path, "", { time: t }))).status).toBe(200);
+    expect((await call(await signedRequest(d, "GET", path, "", { time: t }))).status).toBe(200);
+  });
+
+  it("missing or malformed nonce gives 401", async () => {
+    const { d, path } = await own();
+    expect((await call(await signedRequest(d, "GET", path, "", { nonce: "" }))).status).toBe(401);
+    expect((await call(await signedRequest(d, "GET", path, "", { nonce: "XYZ" }))).status).toBe(401);
   });
 
   it("query string is rejected", async () => {

@@ -16,16 +16,18 @@ export async function newDevice(): Promise<Dev> {
 
 export const now = () => Math.floor(Date.now() / 1000);
 
-export type SignOpts = { time?: number; token?: string | null; ticket?: string; device?: string; signer?: Dev };
+export type SignOpts = { time?: number; nonce?: string; token?: string | null; ticket?: string; device?: string; signer?: Dev };
 
 export async function signedRequest(dev: Dev, method: string, path: string, body = "", opts: SignOpts = {}): Promise<Request> {
   const time = String(opts.time ?? now());
+  const nonce = opts.nonce ?? hex(crypto.getRandomValues(new Uint8Array(16)));
   const bodyBytes = new TextEncoder().encode(body);
-  const s = `lzssh-req-v1\n${method}\n${path}\n${time}\n${hex(await crypto.subtle.digest("SHA-256", bodyBytes))}`;
+  const s = `lzssh-req-v1\n${method}\n${path}\n${time}\n${nonce}\n${hex(await crypto.subtle.digest("SHA-256", bodyBytes))}`;
   const sig = await crypto.subtle.sign({ name: "Ed25519" }, (opts.signer ?? dev).key, new TextEncoder().encode(s));
   const headers: Record<string, string> = {
     "X-Lz-Device": opts.device ?? dev.hex,
     "X-Lz-Time": time,
+    "X-Lz-Nonce": nonce,
     "X-Lz-Sig": b64(sig),
   };
   if (opts.token !== null) headers.Authorization = `Bearer ${opts.token ?? TOKEN}`;

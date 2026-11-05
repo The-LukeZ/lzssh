@@ -55,11 +55,13 @@ pub fn map_status(status: u16, body: &str) -> TransportError {
 
 /// Authorization and signature headers for one request.
 pub fn signed_headers(keys: &DeviceKeys, token: &str, method: &str, path: &str, body: &[u8], now: u64) -> Vec<(&'static str, String)> {
-    let sig = keys.sign(signing_string(method, path, now, body).as_bytes());
+    let nonce = hex::encode(crate::vault::random::<16>());
+    let sig = keys.sign(signing_string(method, path, now, &nonce, body).as_bytes());
     vec![
         ("Authorization", format!("Bearer {token}")),
         ("X-Lz-Device", keys.id()),
         ("X-Lz-Time", now.to_string()),
+        ("X-Lz-Nonce", nonce),
         ("X-Lz-Sig", BASE64.encode(&sig)),
     ]
 }
@@ -298,14 +300,19 @@ mod tests {
     fn signed_headers_cover_body() {
         let k = keys(1);
         let h = signed_headers(&k, "t", "POST", "/v1/mailbox/x", b"{}", 1700000000);
+        let h2 = signed_headers(&k, "t", "POST", "/v1/mailbox/x", b"{}", 1700000000);
         let get = |n: &str| h.iter().find(|(k, _)| *k == n).map(|(_, v)| v.clone()).unwrap();
         assert_eq!(get("Authorization"), "Bearer t");
         assert_eq!(get("X-Lz-Device"), k.id());
         assert_eq!(get("X-Lz-Time"), "1700000000");
         let sig: [u8; 64] = BASE64.decode(get("X-Lz-Sig").as_bytes()).unwrap().try_into().unwrap();
-        let msg = signing_string("POST", "/v1/mailbox/x", 1700000000, b"{}");
+        let nonce = get("X-Lz-Nonce");
+        assert_eq!(nonce.len(), 32);
+        let sig2 = h2.iter().find(|(k, _)| *k == "X-Lz-Sig").map(|(_, v)| v.clone()).unwrap();
+        assert_ne!(sig2, get("X-Lz-Sig"), "the same request twice must not repeat the signature");
+        let msg = signing_string("POST", "/v1/mailbox/x", 1700000000, &nonce, b"{}");
         assert!(parse_id(&k.id()).unwrap().verify(msg.as_bytes(), &ed25519_dalek::Signature::from_bytes(&sig)).is_ok());
-        let other = signing_string("POST", "/v1/mailbox/x", 1700000000, b"{ }");
+        let other = signing_string("POST", "/v1/mailbox/x", 1700000000, &nonce, b"{ }");
         assert!(parse_id(&k.id()).unwrap().verify(other.as_bytes(), &ed25519_dalek::Signature::from_bytes(&sig)).is_err());
     }
 
