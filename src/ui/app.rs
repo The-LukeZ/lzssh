@@ -23,6 +23,7 @@ pub struct LzApp {
     pub run_dir: PathBuf,
     pub unlock: super::unlock::UnlockState,
     pub secrets_ui: super::secrets::SecretsState,
+    pub hosts_ui: super::hosts::HostsState,
 }
 
 const TOAST_TTL: Duration = Duration::from_secs(5);
@@ -49,6 +50,7 @@ impl LzApp {
             run_dir: paths::run_dir(),
             unlock: Default::default(),
             secrets_ui: Default::default(),
+            hosts_ui: Default::default(),
         }
     }
 
@@ -68,6 +70,11 @@ impl LzApp {
                 self.toast(format!("Could not save secrets: {e}"));
             }
         }
+    }
+
+    /// Export key to host: implemented in Task 9.
+    pub fn start_export(&mut self, _host: uuid::Uuid) {
+        self.toast("Export is not available yet");
     }
 
     /// Called once after the vault is unlocked.
@@ -110,7 +117,8 @@ impl eframe::App for LzApp {
         egui::CentralPanel::default().show(ui, |ui| match self.screen {
             Screen::Unlock => super::unlock::show(self, ui),
             Screen::Secrets => super::secrets::show(self, ui),
-            Screen::Hosts | Screen::Devices => {
+            Screen::Hosts => super::hosts::show(self, ui),
+            Screen::Devices => {
                 ui.label("Coming soon");
             }
         });
