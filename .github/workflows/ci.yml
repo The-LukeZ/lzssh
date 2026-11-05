@@ -24,7 +24,8 @@ jobs:
       - run: rustup update stable --no-self-update && rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Every ref saves its own cache; GitHub scopes PR caches to that PR (plus main's as fallback).
+          save-if: true
       - run: cargo test --locked
       - run: cargo build --locked --release --bins
       - name: Package
