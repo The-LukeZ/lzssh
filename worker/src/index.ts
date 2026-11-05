@@ -1,3 +1,4 @@
+import wildcardMatch from "wildcard-match";
 import { HEX_ID, tokenOk, verifyRequest } from "./auth";
 import type { CallCtx, OpResult } from "./types";
 
@@ -11,22 +12,28 @@ type Route =
   | { op: "allow" | "disallow"; mailbox: string; peer: string }
   | { op: "pairing"; mailbox: string };
 
+const MSG_ID = /^[A-Za-z0-9-]{1,64}$/;
+
+type RouteDef = { method: string; pattern: string; build: (p: string[]) => Route | null };
+
+/** `*` matches exactly one path segment. Captured segments are passed to `build` in order. */
+const ROUTE_DEFS: RouteDef[] = [
+  { method: "GET", pattern: "/v1/mailbox/*", build: ([mailbox]) => ({ op: "list", mailbox }) },
+  { method: "POST", pattern: "/v1/mailbox/*", build: ([mailbox]) => ({ op: "post", mailbox }) },
+  { method: "PUT", pattern: "/v1/mailbox/*/pairing", build: ([mailbox]) => ({ op: "pairing", mailbox }) },
+  { method: "PUT", pattern: "/v1/mailbox/*/allow/*", build: ([mailbox, peer]) => (HEX_ID.test(peer) ? { op: "allow", mailbox, peer } : null) },
+  { method: "DELETE", pattern: "/v1/mailbox/*/allow/*", build: ([mailbox, peer]) => (HEX_ID.test(peer) ? { op: "disallow", mailbox, peer } : null) },
+  { method: "DELETE", pattern: "/v1/mailbox/*/*", build: ([mailbox, id]) => (MSG_ID.test(id) ? { op: "remove", mailbox, id } : null) },
+];
+const ROUTES = ROUTE_DEFS.map((r) => ({ ...r, match: wildcardMatch(r.pattern, "/") }));
+
 function route(method: string, path: string): Route | null {
-  const p = path.split("/");
-  // ["", "v1", "mailbox", mailbox, ...rest]
-  if (p[1] !== "v1" || p[2] !== "mailbox" || !HEX_ID.test(p[3] ?? "")) return null;
-  const mailbox = p[3];
-  const rest = p.slice(4);
-  if (rest.length === 0) {
-    if (method === "POST") return { op: "post", mailbox };
-    if (method === "GET") return { op: "list", mailbox };
-  } else if (rest.length === 1 && rest[0] === "pairing") {
-    if (method === "PUT") return { op: "pairing", mailbox };
-  } else if (rest.length === 1 && method === "DELETE" && /^[A-Za-z0-9-]{1,64}$/.test(rest[0])) {
-    return { op: "remove", mailbox, id: rest[0] };
-  } else if (rest.length === 2 && rest[0] === "allow" && HEX_ID.test(rest[1])) {
-    if (method === "PUT") return { op: "allow", mailbox, peer: rest[1] };
-    if (method === "DELETE") return { op: "disallow", mailbox, peer: rest[1] };
+  for (const r of ROUTES) {
+    if (r.method !== method || !r.match(path)) continue;
+    const segs = path.split("/");
+    const params = r.pattern.split("/").flatMap((seg, i) => (seg === "*" ? [segs[i]] : []));
+    if (!HEX_ID.test(params[0])) return null;
+    return r.build(params);
   }
   return null;
 }

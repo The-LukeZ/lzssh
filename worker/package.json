@@ -15,5 +15,8 @@
     "typescript": "^7.0.2",
     "vitest": "^5.1.0",
     "wrangler": "^4.157.0"
+  },
+  "dependencies": {
+    "wildcard-match": "^5.1.6"
   }
 }

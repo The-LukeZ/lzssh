@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      wildcard-match:
+        specifier: ^5.1.6
+        version: 5.1.6
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: ^1.5.1
@@ -993,6 +997,9 @@ packages:
     engines: {node: '>=20.11'}
     hasBin: true
 
+  wildcard-match@5.1.6:
+    resolution: {integrity: sha512-Dh5N543my42ynFsbT0v6iPpaqJt95MOK1n/lhojVTe/hS3gpP6e938bbzsfaS0goLlJbhEOCIJPe/Tc3hckoaQ==}
+
   workerd@1.20261103.1:
     resolution: {integrity: sha512-GgcAnUH94uY8BEDc7CUyX3qsuLVbiidV+SZqJhasxbKi+f2dtR5xrgBC18uLbnaBFarlNFCYfr8JAIL2xJpnZw==}
     engines: {node: '>=16'}
@@ -1710,6 +1717,8 @@ snapshots:
       - msw
 
   why-is-node-running@3.2.1: {}
+
+  wildcard-match@5.1.6: {}
 
   workerd@1.20261103.1:
     optionalDependencies:
