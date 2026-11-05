@@ -1,0 +1,75 @@
+# lzssh CI: Windows tests, Windows x64 build (cross-compiled with cargo-xwin), releases on tags.
+# Release: push a tag like `v0.1.0` (should match Cargo.toml's version).
+
+stages: [test, build, release]
+
+variables:
+  TARGET: x86_64-pc-windows-msvc
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/lzssh"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+.*$/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Unit tests need real Windows (DPAPI, named pipes, icacls).
+test:windows:
+  stage: test
+  tags: [saas-windows-medium-amd64]
+  cache:
+    key: cargo-windows
+    paths: [target/]
+  script:
+    - Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+    - .\rustup-init.exe -y --profile minimal --default-toolchain stable
+    - $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+    - cargo --version
+    - cargo test --locked
+
+build:windows:
+  stage: build
+  image: messense/cargo-xwin
+  cache:
+    key: cargo-xwin
+    paths: [target/, .xwin-cache/]
+  variables:
+    XWIN_CACHE_DIR: "${CI_PROJECT_DIR}/.xwin-cache"
+  script:
+    - rustup target add "$TARGET"
+    - cargo xwin build --locked --release --target "$TARGET" --bins
+    - VERSION="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+    - ZIP="lzssh-${VERSION}-windows-x64.zip"
+    - mkdir -p dist/lzssh
+    - cp "target/$TARGET/release/lzssh.exe" "target/$TARGET/release/lzssh-ssh.exe" dist/lzssh/
+    - (command -v zip >/dev/null || (apt-get update -qq && apt-get install -y -qq zip >/dev/null))
+    - (cd dist && zip -r "../$ZIP" lzssh)
+    - echo "ZIP=$ZIP" >> build.env
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$ZIP" "${PACKAGE_REGISTRY_URL}/${CI_COMMIT_TAG}/${ZIP}"
+      fi
+  artifacts:
+    name: "lzssh-windows-x64"
+    paths: ["lzssh-*-windows-x64.zip"]
+    reports:
+      dotenv: build.env
+    expire_in: 30 days
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs: [build:windows, test:windows]
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Releasing $CI_COMMIT_TAG with $ZIP"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "lzssh $CI_COMMIT_TAG"
+    description: "Windows x64 build. Unzip and run `lzssh.exe`; keep `lzssh-ssh.exe` in the same folder."
+    assets:
+      links:
+        - name: "$ZIP"
+          url: "${PACKAGE_REGISTRY_URL}/${CI_COMMIT_TAG}/${ZIP}"
+          link_type: package
