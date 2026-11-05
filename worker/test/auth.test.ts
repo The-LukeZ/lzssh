@@ -92,3 +92,10 @@ describe("request authentication", () => {
     expect((await call(await signedRequest(d, "GET", path, "", { device: "ABC" }))).status).toBe(401);
   });
 });
+
+describe("entry module", () => {
+  it("exports only the handler and the Durable Object (workerd rejects other exports)", async () => {
+    const mod = await import("../src/index");
+    expect(Object.keys(mod).sort()).toEqual(["Mailbox", "default"]);
+  });
+});

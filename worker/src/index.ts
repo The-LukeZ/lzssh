@@ -3,7 +3,7 @@ import type { CallCtx, OpResult } from "./types";
 
 export { Mailbox } from "./mailbox";
 
-export const MAX_BODY = 1024 * 1024;
+const MAX_BODY = 1024 * 1024;
 
 type Route =
   | { op: "post" | "list"; mailbox: string }
