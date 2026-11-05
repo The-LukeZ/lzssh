@@ -1,6 +1,6 @@
 //! Devices screen (pairing) and the "Send to device" dialog.
 use super::app::LzApp;
-use crate::sync::net::NetCmd;
+use crate::sync::mailbox::NetCmd;
 use crate::sync::payload::{FolderSel, build_payload};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};

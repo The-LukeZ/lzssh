@@ -3,7 +3,7 @@ use crate::model::Store;
 use crate::paths;
 use crate::vault::Vault;
 use crate::device::{Device, PairedDevice};
-use crate::sync::net::{self, NetCmd, NetEvent};
+use crate::sync::mailbox::{self, NetCmd, NetEvent};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
@@ -102,7 +102,7 @@ impl LzApp {
         match Device::load_or_create(&self.device_path) {
             Ok(d) => {
                 *self.paired.write().expect("paired lock") = d.paired.clone();
-                self.net = Some(net::spawn(d.secret_key, d.name.clone(), self.paired.clone()));
+                self.net = Some(mailbox::spawn(d.secret_key, d.name.clone(), self.paired.clone(), None));
                 self.device = Some(d);
             }
             Err(e) => self.toast(format!("Sync unavailable: could not load device.json: {e}")),
@@ -144,7 +144,7 @@ impl LzApp {
                     self.save_device();
                     self.toast(format!("Paired with {}", d.name));
                 }
-                NetEvent::Received { from, payload } => {
+                NetEvent::Received { id: _, from, payload } => {
                     let name = self.device_name(&from);
                     let Some(vault) = self.vault.as_mut() else { continue };
                     match crate::sync::payload::apply_payload(&mut self.store, vault, payload) {
@@ -164,6 +164,7 @@ impl LzApp {
                     let name = self.device_name(&to);
                     self.toast(format!("{name} not reachable ({error})"));
                 }
+                NetEvent::ServerChanged(_) => {}
                 NetEvent::Error(e) => self.toast(e),
             }
         }

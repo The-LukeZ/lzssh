@@ -43,9 +43,6 @@ pub fn encode(c: &PairCode) -> String {
 
 pub fn decode(s: &str) -> anyhow::Result<PairCode> {
     let clean: String = s.chars().filter(|c| !c.is_whitespace() && *c != '-').collect::<String>().to_ascii_uppercase();
-    if clean.starts_with("LZ1") {
-        bail!("This code comes from an older lzssh version. Update lzssh on the other device and create a new code.");
-    }
     let Some(body) = clean.strip_prefix(PREFIX) else { bail!("Not an lzssh pairing code (must start with LZ2-)") };
     let raw = BASE32_NOPAD.decode(body.as_bytes()).context("Pairing code contains invalid characters")?;
     ensure!(raw.len() > FIXED, "Pairing code is too short");
@@ -88,8 +85,6 @@ mod tests {
         assert!(decode(&s[4..]).is_err());
         assert!(decode("LZ2-AAAA").is_err());
         assert!(decode("").is_err());
-        let old = decode("LZ1-AAAAA-BBBBB").unwrap_err().to_string();
-        assert!(old.contains("older lzssh"), "{old}");
     }
 
     #[test]

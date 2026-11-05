@@ -16,7 +16,6 @@ egui = "0.37"
 hex = "0.4.3"
 hkdf = "0.12"
 hmac = "0.12"
-iroh = "1.4.1"
 rand = "0.10.3"
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
