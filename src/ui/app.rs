@@ -89,8 +89,8 @@ impl LzApp {
     }
 
     /// Export key to host: implemented in Task 9.
-    pub fn start_export(&mut self, _host: uuid::Uuid) {
-        self.toast("Export is not available yet");
+    pub fn start_export(&mut self, host: uuid::Uuid) {
+        self.hosts_ui.export = Some((host, None));
     }
 
     /// Called once after the vault is unlocked.
@@ -203,6 +203,7 @@ impl eframe::App for LzApp {
             self.nav(ui);
         }
         super::devices::send_dialog(self, ui);
+        super::hosts::export_dialog(self, ui);
         self.show_toasts(ui);
         egui::CentralPanel::default().show(ui, |ui| match self.screen {
             Screen::Unlock => super::unlock::show(self, ui),

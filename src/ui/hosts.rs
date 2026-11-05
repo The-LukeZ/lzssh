@@ -14,6 +14,8 @@ pub struct HostsState {
     confirm_delete: Option<Uuid>,
     /// Set by the folder context menu; picked up by the send dialog (Task 8).
     pub send_request: Option<Option<Uuid>>,
+    /// Export dialog: target host and chosen secret.
+    pub export: Option<(Uuid, Option<Uuid>)>,
 }
 
 /// Actions collected while drawing, applied afterwards (avoids borrowing app twice).
@@ -344,5 +346,49 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
             }
             Action::Send(folder) => app.hosts_ui.send_request = Some(folder),
         }
+    }
+}
+
+/// "Export key to host": pick a secret with a public key, then run the append command over ssh
+/// using the host's current authentication, in a terminal tab so the user sees the result.
+pub fn export_dialog(app: &mut LzApp, ui: &mut egui::Ui) {
+    let Some((host_id, mut chosen)) = app.hosts_ui.export else { return };
+    let Some(host) = app.store.hosts.iter().find(|h| h.id == host_id).cloned() else {
+        app.hosts_ui.export = None;
+        return;
+    };
+    let keys: Vec<_> = app.vault.as_ref().map(|v| v.list()).unwrap_or_default().into_iter().filter(|m| m.public_key.is_some()).collect();
+    let mut open = true;
+    let mut go = false;
+    egui::Window::new(format!("Export key to {}", host.name)).collapsible(false).open(&mut open).show(ui.ctx(), |ui| {
+        if keys.is_empty() {
+            ui.label("No SSH or FIDO keys with a public key in Secrets.");
+            return;
+        }
+        ui.label("Key to install in ~/.ssh/authorized_keys:");
+        for m in &keys {
+            ui.radio_value(&mut chosen, Some(m.id), format!("{} ({})", m.name, m.kind.label()));
+        }
+        ui.weak("Logs in with the host's current authentication. Linux/Unix hosts only.");
+        go = ui.add_enabled(chosen.is_some(), egui::Button::new("Export")).clicked();
+    });
+    app.hosts_ui.export = if open && !go { Some((host_id, chosen)) } else { None };
+    if !go {
+        return;
+    }
+    let Some(pk) = chosen.and_then(|id| keys.iter().find(|m| m.id == id)).and_then(|m| m.public_key.clone()) else { return };
+    let Some(vault) = app.vault.as_ref() else { return };
+    let r = crate::export::authorized_keys_command(&pk)
+        .map_err(|e| e.to_string())
+        .and_then(|cmd| {
+            let mut inv = prepare_connect(&host, vault, &app.run_dir, false).map_err(|e| e.to_string())?;
+            // Force a TTY so the tab can wait for Enter and the user sees the result.
+            let dashdash = inv.args.iter().position(|a| a == "--").unwrap_or(inv.args.len());
+            inv.args.insert(dashdash, "-t".into());
+            inv.args.push(format!("{cmd}; echo; read -r -p 'Press Enter to close' _"));
+            launch_in_terminal(&format!("Export to {}", host.name), &inv).map_err(|e| e.to_string())
+        });
+    if let Err(e) = r {
+        app.toast(format!("Export failed: {e}"));
     }
 }

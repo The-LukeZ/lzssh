@@ -3,6 +3,7 @@
 mod connect;
 mod device;
 mod dpapi;
+mod export;
 mod keys;
 mod model;
 mod paths;
