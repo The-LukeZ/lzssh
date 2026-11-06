@@ -1,4 +1,4 @@
-//! Quick unlock setup (shown on the Secrets screen) and background-job helpers shared with the PIN screen.
+//! Quick unlock setup (shown on the Settings screen) and background-job helpers shared with the PIN screen.
 use super::app::LzApp;
 use crate::quick_unlock::{self as qu, Owner, Secret};
 use crate::vault::{UnlockKind, UnlockMethod};

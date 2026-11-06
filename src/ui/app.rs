@@ -19,6 +19,7 @@ pub enum Screen {
     Secrets,
     KnownHosts,
     Devices,
+    Settings,
 }
 
 pub struct LzApp {
@@ -48,6 +49,7 @@ pub struct LzApp {
     hotkey_rx: Option<Receiver<HotkeyEvent>>,
     pub hotkey_error: Option<String>,
     pub picker: super::picker::PickerState,
+    pub settings_ui: super::settings::SettingsState,
     pub pending_wipe: Option<PendingWipe>,
 }
 
@@ -89,6 +91,7 @@ impl LzApp {
             hotkey_rx: None,
             hotkey_error: None,
             picker: Default::default(),
+            settings_ui: Default::default(),
             pending_wipe: None,
         }
     }
@@ -254,7 +257,7 @@ impl LzApp {
             ui.horizontal(|ui| {
                 ui.heading("lzssh");
                 ui.separator();
-                for (s, label) in [(Screen::Hosts, "Hosts"), (Screen::Secrets, "Secrets"), (Screen::KnownHosts, "Known hosts"), (Screen::Devices, "Devices")] {
+                for (s, label) in [(Screen::Hosts, "Hosts"), (Screen::Secrets, "Secrets"), (Screen::KnownHosts, "Known hosts"), (Screen::Devices, "Devices"), (Screen::Settings, "Settings")] {
                     if ui.selectable_label(self.screen == s, label).clicked() {
                         self.screen = s;
                     }
@@ -300,6 +303,7 @@ impl eframe::App for LzApp {
             Screen::Hosts => super::hosts::show(self, ui),
             Screen::KnownHosts => super::known_hosts::show(self, ui),
             Screen::Devices => super::devices::show(self, ui),
+            Screen::Settings => super::settings::show(self, ui),
         });
     }
 
