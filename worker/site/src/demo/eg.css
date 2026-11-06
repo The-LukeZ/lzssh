@@ -1,0 +1,110 @@
+/* egui replica */
+.eg {
+  flex: 1; min-height: 0;
+  position: relative;
+  display: flex; flex-direction: column;
+  font: 300 15px/1.35 "Ubuntu", "Segoe UI", sans-serif;
+  color: var(--eg-label);
+  user-select: none;
+}
+.eg * { font: inherit; }
+.eg .nav { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--eg-sep); flex: none; }
+.eg .nav .h { font-size: 22px; color: var(--eg-text); margin-right: 4px; }
+.eg .vsep { width: 1px; align-self: stretch; background: var(--eg-sep); margin: 0 6px; }
+.eg .body { flex: 1; min-height: 0; display: flex; position: relative; }
+.eg .left { width: 340px; flex: none; border-right: 1px solid var(--eg-sep); padding: 10px 12px; overflow: auto; }
+.eg .central { flex: 1; min-width: 0; padding: 10px 14px; overflow: auto; }
+.eg .toasts { flex: none; border-top: 1px solid var(--eg-sep); padding: 6px 10px; color: var(--eg-label); }
+.eg .toasts div + div { margin-top: 2px; }
+
+.eg button {
+  border: 0; cursor: default;
+  background: var(--eg-btn); color: var(--eg-text);
+  border-radius: 4px;
+  padding: 2px 8px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+.eg button:hover:not(:disabled) { background: var(--eg-btn-hover); color: #f0f0f0; outline: 1px solid #5a5a5a; }
+.eg button:active:not(:disabled) { background: var(--eg-btn-active); color: #fff; }
+.eg button:disabled { opacity: 0.45; }
+.eg button.sm { padding: 0 6px; line-height: 18px; font-size: 13px; }
+.eg .sel {
+  background: none; color: var(--eg-text); padding: 2px 8px; border-radius: 4px;
+}
+.eg .sel:hover:not(.on) { background: var(--eg-btn); outline: none; }
+.eg .sel.on { background: var(--eg-sel); color: #fff; }
+.eg .sel.on:hover { background: var(--eg-sel); outline: none; }
+.eg :focus-visible { outline: 1px solid var(--eg-sel-stroke) !important; outline-offset: 0; }
+
+.eg input[type=text], .eg input[type=password], .eg textarea {
+  background: var(--eg-extreme); color: var(--eg-text);
+  border: 1px solid transparent; border-radius: 6px;
+  padding: 3px 8px; line-height: 20px; width: 100%;
+  user-select: text;
+}
+.eg textarea { font-family: var(--mono); font-size: 13px; resize: none; }
+.eg input:hover, .eg textarea:hover { border-color: #3c3c3c; }
+.eg input:focus, .eg textarea:focus { outline: none; border-color: var(--eg-sel-stroke); }
+.eg input::placeholder, .eg textarea::placeholder { color: #5c5c5c; }
+.eg input.port { width: 80px; background: var(--eg-btn); text-align: center; }
+
+.eg .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.eg .hr { height: 1px; background: var(--eg-sep); margin: 8px 0; }
+.eg .heading { font-size: 22px; color: var(--eg-text); margin: 2px 0 8px; }
+.eg .strong { color: var(--eg-strong); }
+.eg .weak { color: var(--eg-weak); }
+.eg .err { color: var(--eg-error); }
+.eg .warn { color: var(--eg-warn); }
+.eg .mono { font-family: var(--mono); font-size: 13px; }
+.eg .grid { display: grid; grid-template-columns: 150px minmax(0, 480px); gap: 6px 10px; align-items: center; }
+.eg .grid > .fit-content { justify-self: start; }
+
+/* tree */
+.eg .folder > .fh {
+  display: flex; align-items: center; gap: 6px; color: var(--eg-text);
+  padding: 2px 0; cursor: default; background: none; width: 100%; text-align: left;
+}
+.eg .folder > .fh:hover { color: #fff; background: none; outline: none; }
+.eg .tri { display: inline-block; width: 12px; font-size: 11px; transition: transform 0.12s; }
+.eg .folder.closed .tri { transform: rotate(-90deg); }
+.eg .kids { margin: 2px 0 6px 6px; padding-left: 12px; border-left: 1px solid var(--eg-sep); display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 6px; }
+.eg .folder.closed .kids { display: none; }
+
+/* combo */
+.eg .combo { position: relative; display: inline-block; }
+.eg .combo > button::after { content: " \25BC"; font-size: 11px; margin-left: 6px; }
+.eg .menu {
+  position: absolute; z-index: 5; left: 0; top: calc(100% + 3px); min-width: 100%;
+  background: var(--eg-panel); border: 1px solid #3c3c3c; border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  padding: 4px; display: flex; flex-direction: column; gap: 1px;
+}
+.eg .menu .sel, .eg .menu button { text-align: left; }
+.eg .menu .mi { background: none; color: var(--eg-text); text-align: left; }
+.eg .menu .mi:hover:not(:disabled) { background: var(--eg-btn); outline: none; }
+
+/* egui window (dialogs) */
+.eg .ewin {
+  position: absolute; z-index: 4;
+  background: var(--eg-panel); border: 1px solid #3c3c3c; border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  min-width: 340px; max-width: 520px;
+}
+.eg .ewin .wt { padding: 5px 10px; color: var(--eg-text); border-bottom: 1px solid var(--eg-sep); display: flex; justify-content: space-between; }
+.eg .ewin .wt button { background: none; padding: 0 4px; color: var(--eg-label); }
+.eg .ewin .wb { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.eg .checks { display: flex; flex-direction: column; gap: 3px; }
+.eg label.ck { display: flex; gap: 8px; align-items: center; color: var(--eg-text); }
+.eg label.ck input { accent-color: var(--eg-sel); margin: 0; width: 15px; height: 15px; }
+.eg .list { display: flex; flex-direction: column; }
+.eg .list .li { display: flex; align-items: center; gap: 10px; padding: 3px 4px; }
+.eg .list .li:nth-child(even) { background: var(--eg-faint); }
+.eg .list .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eg .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.eg .spin { width: 14px; height: 14px; border: 2px solid #5a5a5a; border-top-color: var(--eg-text); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.eg .unlock { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 120px; }
+.eg .unlock input { width: 170px; }
+

@@ -4,16 +4,21 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "pnpm site:build && wrangler dev",
+    "deploy": "pnpm site:build && wrangler deploy",
     "test": "vitest run",
     "types": "wrangler types",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit && tsc -p site/tsconfig.json",
+    "site:dev": "vite --config site/vite.config.ts",
+    "site:build": "vite build --config site/vite.config.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.5.1",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/node": "^26.6.6",
+    "svelte": "^5.57.3",
     "typescript": "^7.0.2",
+    "vite": "^8.3.5",
     "vitest": "^5.1.0",
     "wrangler": "^4.157.0"
   },

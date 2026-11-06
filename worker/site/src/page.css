@@ -1,0 +1,133 @@
+/* Page: cool grey paper, ink text, the app's own selection blue as the only accent.
+   Demo: a replica of egui's dark theme on a Windows desktop band. */
+:root {
+  --paper: #e4e7e1;
+  --ink: #17232c;
+  --muted: #55616a;
+  --rule: #c2c8c0;
+  --accent: #005c80;
+  --desk-a: #1f3a4f;
+  --desk-b: #14222d;
+  --page-font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --display-font: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+
+  /* egui dark visuals */
+  --eg-panel: #1b1b1b;
+  --eg-extreme: #0a0a0a;
+  --eg-faint: #202020;
+  --eg-btn: #3c3c3c;
+  --eg-btn-hover: #464646;
+  --eg-btn-active: #373737;
+  --eg-text: #b4b4b4;
+  --eg-label: #8c8c8c;
+  --eg-weak: #6c6c6c;
+  --eg-strong: #ffffff;
+  --eg-sep: #3c3c3c;
+  --eg-sel: #005c80;
+  --eg-sel-stroke: #c0deff;
+  --eg-error: #ff4d4d;
+  --eg-warn: #ff8f00;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 1.0625rem/1.55 var(--page-font);
+}
+a { color: var(--accent); text-underline-offset: 0.18em; }
+a:focus-visible, button:focus-visible, [tabindex]:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+code, kbd, pre { font-family: var(--mono); font-size: 0.88em; }
+kbd {
+  padding: 0.05em 0.35em;
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #eef0ec;
+}
+
+.skip { position: absolute; left: -999px; top: 0; }
+.skip:focus { left: 1rem; top: 1rem; background: var(--ink); color: var(--paper); padding: 0.5rem 0.75rem; z-index: 10; }
+
+.top, main > section:not(.stage), footer, .stage-head {
+  width: min(100% - 2.5rem, 68rem);
+  margin-inline: auto;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem 0 0;
+}
+.mark {
+  font: 300 1.5rem/1 "Ubuntu", var(--page-font);
+  letter-spacing: -0.01em;
+}
+.mark { display: inline-flex; align-items: center; gap: 0.5rem; }
+.mark img { border-radius: 6px; }
+.tb-title { display: inline-flex; align-items: center; gap: 8px; }
+.top nav { display: flex; gap: 1.5rem; align-items: center; }
+.top nav a { color: var(--ink); text-decoration: none; }
+.top nav a:hover { text-decoration: underline; }
+.top nav a.dl {
+  background: var(--accent);
+  color: #fff;
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+}
+.top nav a.dl:hover { background: #004a68; text-decoration: none; }
+
+.intro { padding: 4.5rem 0 2.5rem; }
+h1 {
+  font: 600 clamp(2.1rem, 5.2vw, 3.7rem)/1.06 var(--display-font);
+  letter-spacing: -0.025em;
+  max-width: 17ch;
+  margin: 0 0 1.25rem;
+}
+.lede { max-width: 58ch; margin: 0; color: var(--muted); font-size: 1.15rem; }
+
+/* Demo band */
+.stage {
+  background:
+    linear-gradient(160deg, var(--desk-a), var(--desk-b));
+  color: #dfe7ec;
+  padding: 2rem 0 2.25rem;
+}
+.stage-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.25rem 2rem; margin-bottom: 1.25rem; font-size: 0.97rem; }
+.stage-head p { margin: 0; }
+.stage-head .quiet { color: #b3c3cf; }
+.stage kbd { background: #24394a; border-color: #46617a; color: #fff; }
+
+/* Content sections */
+.features, .sync { padding: 4rem 0 0; }
+h2 { font: 600 1.85rem/1.15 var(--display-font); letter-spacing: -0.015em; margin: 0 0 1.75rem; }
+h3 { font: 600 1.2rem/1.3 var(--display-font); margin: 0 0 0.5rem; }
+.features dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1.75rem 3rem; }
+.features dt { font-weight: 600; margin-bottom: 0.2rem; }
+.features dd { margin: 0; color: var(--muted); max-width: 46ch; }
+.sync > p { max-width: 60ch; margin: 0 0 1.5rem; }
+.steps { list-style: none; counter-reset: s; padding: 0; margin: 0 0 3rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1.5rem 2.5rem; }
+.steps li { counter-increment: s; padding-top: 0.9rem; border-top: 2px solid var(--ink); max-width: 36ch; color: var(--muted); }
+.steps li::before { content: counter(s); display: block; font: 600 2.4rem/1 var(--display-font); color: var(--accent); margin-bottom: 0.5rem; }
+.steps strong { color: var(--ink); }
+.server { border-left: 3px solid var(--accent); padding: 0.25rem 0 0.25rem 1.5rem; max-width: 64ch; }
+.server p { margin: 0 0 1rem; }
+pre { background: var(--ink); color: #e4e7e1; padding: 1rem 1.25rem; border-radius: 6px; overflow-x: auto; margin: 0; line-height: 1.6; }
+footer { margin-top: 4.5rem; padding: 1.5rem 0 3rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.93rem; }
+footer p { margin: 0 0 0.3rem; }
+
+@media (max-width: 40rem) {
+  .top nav { gap: 1rem; }
+  .top nav a:not(.dl) { display: none; }
+  .intro { padding-top: 3rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

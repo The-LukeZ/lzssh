@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "border-accent-on-rounded",
+        "value": "*",
+        "files": [
+          "site/index.html"
+        ],
+        "createdAt": "2026-11-06T11:49:16.809Z",
+        "reason": "Claude: the rounded element with a thick bottom border is the kbd keycap style (border-bottom-width 2px), an intentional key-cap look"
+      }
+    ]
+  }
+}

@@ -2,6 +2,8 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "lzssh-mailbox",
   "main": "src/index.ts",
+  // Static site with the interactive demo. The mailbox API always goes to the Worker.
+  "assets": { "directory": "./public", "run_worker_first": ["/v1/*"] },
   "compatibility_date": "2026-11-01",
   "routes": [{ "pattern": "lzssh.thelukez.com", "custom_domain": true }],
   "durable_objects": {

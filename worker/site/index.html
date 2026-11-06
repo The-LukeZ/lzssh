@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>lzssh: SSH host manager for Windows</title>
+    <meta
+      name="description"
+      content="Save SSH hosts in folders, keep passwords and keys in a PIN-encrypted vault, and connect in Windows Terminal with one click. Try the interactive demo."
+    />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#1f3a4f" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400&display=swap"
+    />
+    <link rel="stylesheet" href="/src/page.css" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <a class="skip" href="#demo">Skip to the demo</a>
+
+    <header class="top">
+      <span class="mark"
+        ><img src="/icon-192.png" alt="" width="28" height="28" />lzssh</span
+      >
+      <nav aria-label="Links">
+        <a
+          href="https://github.com/The-LukeZ/lzssh"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Source</a
+        >
+        <a
+          class="dl"
+          href="https://github.com/The-LukeZ/lzssh/releases/latest"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Download for Windows</a
+        >
+      </nav>
+    </header>
+
+    <main>
+      <section class="intro">
+        <h1>
+          Your SSH hosts, keys and security keys in one small Windows app.
+        </h1>
+        <p class="lede">
+          Save hosts in folders, keep passwords and keys in a PIN-encrypted
+          vault, and connect in Windows Terminal with one click. A YubiKey or
+          Windows Hello works through the native Windows dialog.
+        </p>
+      </section>
+
+      <section class="stage" id="demo" aria-label="Interactive demo">
+        <div class="stage-head">
+          <p>
+            Try it here. The demo PIN is <kbd>123456</kbd>. Double-click a host
+            to connect, or press <kbd>Ctrl+Alt+P</kbd> for the password picker.
+          </p>
+          <p class="quiet">
+            Runs entirely in this page. Nothing is stored or sent.
+          </p>
+        </div>
+        <div id="demo-root"><noscript><p>The demo needs JavaScript.</p></noscript></div>
+      </section>
+
+      <section class="features" aria-labelledby="f-h">
+        <h2 id="f-h">What it does</h2>
+        <dl>
+          <div>
+            <dt>Hosts and folders</dt>
+            <dd>
+              Name, IPv4 or IPv6 address, port and user, grouped in folders.
+              Sessions open in Windows Terminal through the built-in Windows
+              OpenSSH client.
+            </dd>
+          </div>
+          <div>
+            <dt>A vault for secrets</dt>
+            <dd>
+              Passwords, private keys and FIDO key handles, encrypted with a PIN
+              of 6 to 256 digits (Argon2id and XChaCha20-Poly1305), then wrapped
+              with Windows DPAPI.
+            </dd>
+          </div>
+          <div>
+            <dt>Quick unlock</dt>
+            <dd>
+              Unlock with Windows Hello or a FIDO2 security key instead of
+              typing the PIN. The PIN always keeps working.
+            </dd>
+          </div>
+          <div>
+            <dt>Security keys</dt>
+            <dd>
+              Create <code>ed25519-sk</code> or <code>ecdsa-sk</code> keys in
+              the Windows security key dialog. Logging in takes one touch.
+            </dd>
+          </div>
+          <div>
+            <dt>Passwords without typing</dt>
+            <dd>
+              Press <kbd>Ctrl+Alt+P</kbd> anywhere, pick a password, paste it.
+              The clipboard is cleared after 90 seconds.
+            </dd>
+          </div>
+          <div>
+            <dt>Keys onto servers</dt>
+            <dd>
+              Append a public key to <code>~/.ssh/authorized_keys</code> on a
+              host, and clean up <code>known_hosts</code> without a text editor.
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="sync" aria-labelledby="s-h">
+        <h2 id="s-h">Moving hosts to another PC</h2>
+        <p>
+          Two installs can pair and send folders and secrets to each other.
+          Everything is encrypted for the receiving device before it leaves your
+          PC.
+        </p>
+        <ol class="steps">
+          <li>
+            <strong>Pair.</strong> One device shows a code, the other enters it
+            within 10 minutes.
+          </li>
+          <li>
+            <strong>Send.</strong> Pick the folders and secrets, then the device
+            to send them to.
+          </li>
+          <li>
+            <strong>Pick up.</strong> The other device collects and decrypts
+            them the next time lzssh is unlocked there.
+          </li>
+        </ol>
+        <div class="server">
+          <h3>This page runs on a sync server</h3>
+          <p>
+            The same Cloudflare Worker that serves this page holds the mailboxes
+            under <code>/v1/</code>. Every request needs the access token and a
+            signature from the device key, and the Worker only ever stores
+            ciphertext. To run your own, deploy the
+            <a href="https://github.com/The-LukeZ/lzssh/tree/main/worker"
+              ><code>worker/</code></a
+            >
+            folder:
+          </p>
+          <pre><code>cd worker &amp;&amp; pnpm install
+pnpm wrangler secret put ACCESS_TOKEN
+pnpm wrangler deploy</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        lzssh is a personal project. It may change or break at any time and
+        there is no support. MIT licensed.
+      </p>
+      <p>
+        Windows 10 or 11, x64. Keep <code>lzssh-ssh.exe</code> next to
+        <code>lzssh.exe</code>.
+      </p>
+    </footer>
+  </body>
+</html>

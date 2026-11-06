@@ -17,3 +17,5 @@ node_modules/
 
 # Local design docs (not published)
 /docs/
+
+/worker/public/

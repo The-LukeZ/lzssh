@@ -20,6 +20,7 @@ Worker (`cd worker`, pnpm):
 - `pnpm test` (vitest + `@cloudflare/vitest-plugin`, single file: `pnpm vitest run test/auth.test.ts`)
 - `pnpm check` (tsc), `pnpm dev` (needs `.env` copied from `.env.example`), `pnpm wrangler deploy`
 - After editing `wrangler.jsonc` bindings, run `pnpm types` to regenerate `worker-configuration.d.ts`.
+- Static site with the interactive demo: Svelte 5 + Vite in `worker/site/` (`pnpm site:dev` for HMR, `pnpm site:build`). It builds into `worker/public/` (gitignored), which wrangler serves as static assets; `pnpm dev` and `pnpm deploy` build it first. `/v1/*` always goes to the Worker (`run_worker_first`).
 
 CI (`.github/workflows/ci.yml`) runs only the Rust tests and build on Windows; Worker tests are not in CI. Tags `vX.Y.Z` create a GitHub Release.
 
