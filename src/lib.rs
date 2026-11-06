@@ -6,6 +6,7 @@ pub mod connect;
 pub mod device;
 pub mod dpapi;
 pub mod export;
+pub mod hotkey;
 pub mod keys;
 pub mod known_hosts;
 pub mod model;
