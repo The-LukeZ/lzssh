@@ -92,11 +92,6 @@ impl LzApp {
         }
     }
 
-    /// Export key to host: implemented in Task 9.
-    pub fn start_export(&mut self, host: uuid::Uuid) {
-        self.hosts_ui.export = Some((host, None));
-    }
-
     /// Called once after the vault is unlocked.
     pub fn on_unlocked(&mut self) {
         match Device::load_or_create(&self.device_path) {
@@ -224,7 +219,7 @@ impl eframe::App for LzApp {
             self.nav(ui);
         }
         super::devices::send_dialog(self, ui);
-        super::hosts::export_dialog(self, ui);
+        super::secrets::install_dialog(self, ui);
         self.show_toasts(ui);
         egui::CentralPanel::default().show(ui, |ui| match self.screen {
             Screen::Unlock => super::unlock::show(self, ui),
