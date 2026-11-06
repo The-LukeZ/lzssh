@@ -5,7 +5,7 @@ use super::payload::Payload;
 use super::transport::{HttpTransport, Transport, TransportError, unix_now};
 use crate::device::PairedDevice;
 use data_encoding::BASE64;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
