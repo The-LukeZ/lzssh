@@ -7,6 +7,13 @@ pub struct SettingsState {
     capturing: bool,
 }
 
+impl SettingsState {
+    /// Called when the user switches to another screen: stop waiting for a new hotkey.
+    pub fn leave(&mut self) {
+        self.capturing = false;
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum Capture {
     Waiting,
@@ -80,6 +87,13 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leaving_settings_cancels_capture() {
+        let mut st = SettingsState { capturing: true };
+        st.leave();
+        assert!(!st.capturing);
+    }
     use egui::{Event, Key, Modifiers};
 
     fn key(key: Key, modifiers: Modifiers) -> Event {

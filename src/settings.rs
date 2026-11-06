@@ -125,9 +125,20 @@ impl Settings {
         std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
     }
 
+    /// Crash-safe: writes `<path>.tmp`, flushes it to disk, then renames it over `path`, so a crash
+    /// leaves either the old or the new file, never a half-written one.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        use std::io::Write;
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(path, json)
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        let tmp = std::path::PathBuf::from(tmp);
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
+        // On Windows, std::fs::rename replaces an existing target (MoveFileExW with REPLACE_EXISTING).
+        std::fs::rename(&tmp, path)
     }
 }
 
@@ -182,6 +193,28 @@ mod tests {
         let p = d.path().join("settings.json");
         std::fs::write(&p, "{not json").unwrap();
         assert_eq!(Settings::load(&p), Settings::default());
+    }
+
+    #[test]
+    fn save_replaces_existing_file_and_leaves_no_temp() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::fs::write(&p, "old").unwrap();
+        Settings::default().save(&p).unwrap();
+        assert_eq!(Settings::load(&p), Settings::default());
+        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 1, "temp file left behind");
+    }
+
+    #[test]
+    fn failed_save_keeps_old_file() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        let old = Settings { password_hotkey: HotkeySetting { enabled: false, combo: Hotkey::default() } };
+        old.save(&p).unwrap();
+        // A directory where the temp file goes makes the write fail before the file is touched.
+        std::fs::create_dir(d.path().join("settings.json.tmp")).unwrap();
+        assert!(Settings::default().save(&p).is_err());
+        assert_eq!(Settings::load(&p), old);
     }
 
     #[test]

@@ -254,6 +254,9 @@ impl LzApp {
                 ui.separator();
                 for (s, label) in [(Screen::Hosts, "Hosts"), (Screen::Secrets, "Secrets"), (Screen::KnownHosts, "Known hosts"), (Screen::Devices, "Devices"), (Screen::Settings, "Settings")] {
                     if ui.selectable_label(self.screen == s, label).clicked() {
+                        if s != Screen::Settings {
+                            self.settings_ui.leave();
+                        }
                         self.screen = s;
                     }
                 }

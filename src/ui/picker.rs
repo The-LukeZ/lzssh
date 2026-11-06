@@ -107,8 +107,9 @@ fn copy(app: &mut LzApp, id: Uuid, name: &str) {
         Ok(s) => match std::str::from_utf8(&s.material) {
             Ok(pw) => match clipboard::copy_secret(pw) {
                 Ok(seq) => {
+                    // No confirmation: the paste itself shows it worked.
                     app.pending_wipe = Some(PendingWipe::new(seq, Instant::now()));
-                    format!("Copied {name}, clipboard clears in 90 s")
+                    return;
                 }
                 Err(e) => format!("Could not copy {name}: {e}"),
             },
