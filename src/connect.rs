@@ -109,7 +109,8 @@ pub fn materialize_key(secret: &PlainSecret, run_dir: &Path) -> Result<PathBuf, 
             let pem = k.to_openssh(ssh_key::LineEnding::LF).map_err(|e| ConnectError::Key(e.to_string()))?;
             zeroize::Zeroizing::new(pem.as_bytes().to_vec())
         }
-        None => secret.material.clone(),
+        // Normalized here too, so keys imported before normalization existed still load.
+        None => crate::keys::normalize_key_text(&secret.material),
     };
     let _ = std::fs::remove_file(&path);
     // Lock the empty file down first, then write; on any failure remove it so no key is left behind.

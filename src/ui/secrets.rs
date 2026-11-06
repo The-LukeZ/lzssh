@@ -51,7 +51,8 @@ fn build(f: &Form) -> Result<PlainSecret, String> {
         }
         SecretKind::SshKey | SecretKind::FidoKey => {
             let path = f.file.as_ref().ok_or("Pick a key file")?;
-            let bytes = Zeroizing::new(std::fs::read(path).map_err(|e| format!("Cannot read key file: {e}"))?);
+            let raw = Zeroizing::new(std::fs::read(path).map_err(|e| format!("Cannot read key file: {e}"))?);
+            let bytes = crate::keys::normalize_key_text(&raw);
             let pub_path = PathBuf::from(format!("{}.pub", path.display()));
             let sibling = std::fs::read_to_string(&pub_path).ok();
             let pp = Some(f.passphrase.as_str()).filter(|p| !p.is_empty());

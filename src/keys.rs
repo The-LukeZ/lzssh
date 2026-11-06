@@ -1,5 +1,23 @@
 //! Helpers for importing OpenSSH private key files (plain, encrypted, FIDO handles).
 
+/// Canonical text form of a PEM-style key file: no BOM, LF line endings, no surrounding
+/// blank space, exactly one trailing newline. Keys copied out of other apps (e.g. Termius)
+/// often have CRLF or no final newline; `ssh_key` accepts those but Windows `ssh.exe`
+/// rejects them with "invalid format". Non-PEM input is returned unchanged.
+pub fn normalize_key_text(bytes: &[u8]) -> zeroize::Zeroizing<Vec<u8>> {
+    let Ok(text) = std::str::from_utf8(bytes) else { return zeroize::Zeroizing::new(bytes.to_vec()) };
+    let text = text.trim_start_matches('\u{feff}').trim();
+    if !text.starts_with("-----BEGIN ") {
+        return zeroize::Zeroizing::new(bytes.to_vec());
+    }
+    let mut out = zeroize::Zeroizing::new(Vec::with_capacity(text.len() + 1));
+    for line in text.lines() {
+        out.extend_from_slice(line.trim_end().as_bytes());
+        out.push(b'\n');
+    }
+    out
+}
+
 /// Check that `private` is a usable OpenSSH private key and return its public key line.
 /// A sibling `.pub` file's content wins if given. Encrypted keys require the right passphrase.
 pub fn public_key_for(private: &[u8], sibling_pub: Option<&str>, passphrase: Option<&str>) -> Result<String, String> {
@@ -90,6 +108,22 @@ mod tests {
 
     fn key() -> ssh_key::PrivateKey {
         ssh_key::PrivateKey::random(&mut OsRng, ssh_key::Algorithm::Ed25519).unwrap()
+    }
+
+    #[test]
+    fn normalize_fixes_crlf_bom_and_missing_newline() {
+        let pem = key().to_openssh(ssh_key::LineEnding::LF).unwrap().to_string();
+        let messy = format!("\u{feff}\r\n{}", pem.trim_end().replace('\n', "\r\n"));
+        let fixed = normalize_key_text(messy.as_bytes());
+        assert_eq!(std::str::from_utf8(&fixed).unwrap(), pem);
+        assert!(ssh_key::PrivateKey::from_openssh(&fixed[..]).is_ok());
+    }
+
+    #[test]
+    fn normalize_leaves_canonical_and_non_pem_alone() {
+        let pem = key().to_openssh(ssh_key::LineEnding::LF).unwrap().to_string();
+        assert_eq!(&normalize_key_text(pem.as_bytes())[..], pem.as_bytes());
+        assert_eq!(&normalize_key_text(b"hunter2")[..], b"hunter2");
     }
 
     #[test]
