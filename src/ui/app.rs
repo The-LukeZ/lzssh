@@ -1,4 +1,7 @@
+use crate::clipboard::{self, PendingWipe};
 use crate::connect::clean_run_dir;
+use crate::hotkey::{HotkeyEvent, HotkeyThread};
+use crate::settings::Settings;
 use crate::model::Store;
 use crate::paths;
 use crate::vault::Vault;
@@ -38,6 +41,14 @@ pub struct LzApp {
     pub askpass: crate::askpass::Registry,
     pub known_hosts_ui: super::known_hosts::KnownHostsState,
     pub quick_ui: super::quick_unlock::QuickUnlockState,
+    pub settings: Settings,
+    pub settings_path: PathBuf,
+    /// Spawned on the first `logic` call (it needs the egui context).
+    pub hotkey: Option<HotkeyThread>,
+    hotkey_rx: Option<Receiver<HotkeyEvent>>,
+    pub hotkey_error: Option<String>,
+    pub picker: super::picker::PickerState,
+    pub pending_wipe: Option<PendingWipe>,
 }
 
 const TOAST_TTL: Duration = Duration::from_secs(5);
@@ -46,6 +57,7 @@ impl LzApp {
     pub fn new() -> Self {
         let data = paths::data_dir();
         let hosts_path = data.join("hosts.json");
+        let settings_path = data.join("settings.json");
         let mut toasts = Vec::new();
         let (store, warning) = Store::load_or_backup(&hosts_path);
         if let Some(w) = warning {
@@ -71,6 +83,13 @@ impl LzApp {
             askpass: crate::askpass::spawn_server(),
             known_hosts_ui: Default::default(),
             quick_ui: Default::default(),
+            settings: Settings::load(&settings_path),
+            settings_path,
+            hotkey: None,
+            hotkey_rx: None,
+            hotkey_error: None,
+            picker: Default::default(),
+            pending_wipe: None,
         }
     }
 
@@ -186,6 +205,50 @@ impl LzApp {
         }
     }
 
+    fn poll_hotkey(&mut self, ctx: &egui::Context) {
+        if self.hotkey.is_none() {
+            let h = &self.settings.password_hotkey;
+            let (t, rx) = HotkeyThread::spawn(ctx.clone(), h.enabled.then_some(h.combo));
+            self.hotkey = Some(t);
+            self.hotkey_rx = Some(rx);
+        }
+        let events: Vec<HotkeyEvent> = self.hotkey_rx.as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default();
+        for e in events {
+            match e {
+                HotkeyEvent::Registered(Ok(())) => self.hotkey_error = None,
+                HotkeyEvent::Registered(Err(e)) => {
+                    self.toast(e.clone());
+                    self.hotkey_error = Some(e);
+                }
+                HotkeyEvent::Pressed { prev_foreground } => {
+                    if self.vault.is_none() {
+                        // A picker would lose focus to the unlock window at once: show that instead.
+                        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
+                        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+                        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::RequestPaintWhileHidden);
+                        self.toast("Unlock lzssh first");
+                    } else {
+                        self.picker.open_at(prev_foreground);
+                    }
+                    ctx.request_repaint();
+                }
+            }
+        }
+        if self.picker.needs_paint() {
+            // Holds for one frame only, so send it on every call while the picker is up.
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::RequestPaintWhileHidden);
+        }
+        if let Some(w) = self.pending_wipe {
+            let now = Instant::now();
+            if w.is_due(now) {
+                clipboard::wipe_if_unchanged(w.seq);
+                self.pending_wipe = None;
+            } else {
+                ctx.request_repaint_after((w.due - now).min(Duration::from_secs(1)));
+            }
+        }
+    }
+
     fn nav(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("nav").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -215,6 +278,10 @@ impl LzApp {
 }
 
 impl eframe::App for LzApp {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_hotkey(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_net();
         if self.net.is_some() {
@@ -223,6 +290,7 @@ impl eframe::App for LzApp {
         if self.screen != Screen::Unlock {
             self.nav(ui);
         }
+        super::picker::show(self, ui.ctx());
         super::devices::send_dialog(self, ui);
         super::hosts::export_dialog(self, ui);
         self.show_toasts(ui);
@@ -236,6 +304,9 @@ impl eframe::App for LzApp {
     }
 
     fn on_exit(&mut self) {
+        if let Some(w) = self.pending_wipe.take() {
+            clipboard::wipe_if_unchanged(w.seq);
+        }
         clean_run_dir(&self.run_dir);
     }
 }
