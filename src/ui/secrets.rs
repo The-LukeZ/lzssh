@@ -1,5 +1,7 @@
 //! Secrets screen: list, import SSH key / FIDO handle, add password, delete.
 use super::app::LzApp;
+use crate::connect::{launch_in_terminal, prepare_connect};
+use crate::model::Host;
 use crate::keys::{FidoKey, FidoType, create_fido_key, public_key_for};
 use std::sync::mpsc::Receiver;
 use crate::vault::{PlainSecret, SecretKind};
@@ -12,6 +14,25 @@ pub struct SecretsState {
     form: Option<Form>,
     confirm_delete: Option<Uuid>,
     create: Option<CreateFido>,
+    /// "Install on host" dialog for one key.
+    install: Option<Install>,
+}
+
+struct Install {
+    key: Uuid,
+    host: Option<Uuid>,
+    filter: String,
+}
+
+/// Hosts whose name, username or address contains `query` (any case), sorted by name (any case).
+fn install_targets<'a>(hosts: &'a [Host], query: &str) -> Vec<&'a Host> {
+    let q = query.to_lowercase();
+    let mut out: Vec<&Host> = hosts
+        .iter()
+        .filter(|h| [Some(&h.name), Some(&h.username), h.ipv4.as_ref(), h.ipv6.as_ref()].into_iter().flatten().any(|f| f.to_lowercase().contains(&q)))
+        .collect();
+    out.sort_by_key(|h| h.name.to_lowercase());
+    out
 }
 
 struct CreateFido {
@@ -265,6 +286,9 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
                             app.secrets_ui.confirm_delete = Some(m.id);
                         }
                         if let Some(pk) = &m.public_key {
+                            if ui.button("Install on host…").on_hover_text("Add this public key to ~/.ssh/authorized_keys on a host").clicked() {
+                                app.secrets_ui.install = Some(Install { key: m.id, host: None, filter: String::new() });
+                            }
                             if ui.button("Copy").on_hover_text("Copy public key").clicked() {
                                 ui.ctx().copy_text(pk.clone());
                             }
@@ -283,5 +307,85 @@ pub fn show(app: &mut LzApp, ui: &mut egui::Ui) {
     }
     if let Some(t) = toast {
         app.toast(t);
+    }
+}
+
+/// "Install on host": pick a host, then run the append command over ssh using the host's current
+/// authentication, in a terminal tab so the user sees the result.
+pub fn install_dialog(app: &mut LzApp, ui: &mut egui::Ui) {
+    let Some(st) = app.secrets_ui.install.as_mut() else { return };
+    let Some(key) = app.vault.as_ref().and_then(|v| v.meta(st.key)) else {
+        app.secrets_ui.install = None;
+        return;
+    };
+    let Some(pk) = key.public_key.clone() else {
+        app.secrets_ui.install = None;
+        return;
+    };
+    let mut open = true;
+    let mut go = false;
+    egui::Window::new(format!("Install {} on a host", key.name)).collapsible(false).open(&mut open).show(ui.ctx(), |ui| {
+        if app.store.hosts.is_empty() {
+            ui.label("No hosts yet. Add one on the Hosts page.");
+            return;
+        }
+        ui.label("Host to add the key to (~/.ssh/authorized_keys):");
+        ui.add(egui::TextEdit::singleline(&mut st.filter).hint_text("Filter hosts"));
+        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+            for h in install_targets(&app.store.hosts, &st.filter) {
+                let addr = h.ipv4.as_deref().or(h.ipv6.as_deref()).unwrap_or("");
+                ui.radio_value(&mut st.host, Some(h.id), format!("{} ({}@{addr})", h.name, h.username));
+            }
+        });
+        ui.weak("Logs in with the host's current authentication. Linux/Unix hosts only.");
+        go = ui.add_enabled(st.host.is_some(), egui::Button::new("Install")).clicked();
+    });
+    let host_id = st.host;
+    if !open || go {
+        app.secrets_ui.install = None;
+    }
+    if !go {
+        return;
+    }
+    let Some(host) = host_id.and_then(|id| app.store.hosts.iter().find(|h| h.id == id)).cloned() else { return };
+    let Some(vault) = app.vault.as_ref() else { return };
+    let r = crate::export::authorized_keys_command(&pk)
+        .map_err(|e| e.to_string())
+        .and_then(|cmd| {
+            let mut inv = prepare_connect(&host, vault, &app.run_dir, false, &app.askpass).map_err(|e| e.to_string())?;
+            // Force a TTY so the tab can wait for Enter and the user sees the result.
+            let dashdash = inv.args.iter().position(|a| a == "--").unwrap_or(inv.args.len());
+            inv.args.insert(dashdash, "-t".into());
+            inv.args.push(format!("{cmd}; echo; read -r -p 'Press Enter to close' _"));
+            launch_in_terminal(&format!("Install key on {}", host.name), &inv).map_err(|e| e.to_string())
+        });
+    if let Err(e) = r {
+        app.toast(format!("Install failed: {e}"));
+    }
+}
+
+#[cfg(test)]
+mod install_tests {
+    use super::*;
+    use crate::model::Auth;
+
+    fn host(name: &str, user: &str, ipv4: &str) -> Host {
+        Host { id: Uuid::new_v4(), folder_id: None, name: name.into(), ipv4: Some(ipv4.into()), ipv6: None, port: 22, username: user.into(), auth: Auth::Password { secret_id: Uuid::new_v4() } }
+    }
+
+    #[test]
+    fn install_targets_sorted_by_name_any_case() {
+        let hs = [host("web", "root", "10.0.0.1"), host("Backup", "admin", "10.0.0.2"), host("db", "pg", "10.0.0.3")];
+        let names: Vec<_> = install_targets(&hs, "").iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(names, ["Backup", "db", "web"]);
+    }
+
+    #[test]
+    fn install_targets_match_name_user_or_address() {
+        let hs = [host("web", "root", "10.0.0.1"), host("Backup", "admin", "10.0.0.2"), host("db", "pg", "192.168.1.5")];
+        let names = |q| install_targets(&hs, q).iter().map(|h| h.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names("BACK"), ["Backup"]);
+        assert_eq!(names("admin"), ["Backup"]);
+        assert_eq!(names("192.168"), ["db"]);
     }
 }
