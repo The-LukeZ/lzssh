@@ -60,6 +60,13 @@ unsafe fn set_bytes(format: u32, bytes: &[u8]) -> Result<()> {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         let _ = GlobalUnlock(h); // returns Err when the lock count reaches 0
         if let Err(e) = SetClipboardData(format, Some(HANDLE(h.0))) {
+            // Scrub our copy before freeing it. Once SetClipboardData succeeds the system owns the
+            // block and only EmptyClipboard (the wipe) releases it.
+            let p = GlobalLock(h) as *mut u8;
+            if !p.is_null() {
+                std::ptr::write_bytes(p, 0, bytes.len());
+                let _ = GlobalUnlock(h);
+            }
             let _ = GlobalFree(Some(h));
             return Err(e.into());
         }
@@ -68,29 +75,38 @@ unsafe fn set_bytes(format: u32, bytes: &[u8]) -> Result<()> {
 }
 
 /// Puts `text` on the clipboard, marked so Clipboard History and cloud clipboard skip it.
-/// Returns the clipboard sequence number right after the copy.
+/// Returns the clipboard sequence number right after the copy. On any error the clipboard is
+/// left empty, so the secret never sits there without the opt-out markers.
 pub fn copy_secret(text: &str) -> Result<u32> {
-    let mut wide: Zeroizing<Vec<u16>> = Zeroizing::new(text.encode_utf16().collect());
+    // Pre-sized so pushing never reallocates and leaves an unzeroed copy behind
+    // (UTF-16 units never exceed UTF-8 bytes).
+    let mut wide: Zeroizing<Vec<u16>> = Zeroizing::new(Vec::with_capacity(text.len() + 1));
+    wide.extend(text.encode_utf16());
     wide.push(0);
     let bytes = unsafe { std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2) };
     open()?;
     let r = unsafe {
-        (|| -> Result<()> {
+        (|| -> Result<u32> {
             EmptyClipboard()?;
-            set_bytes(CF_UNICODETEXT.0 as u32, bytes)?;
+            // Markers first, the text last: the text is only published once the opt-outs are in place.
             let zero = 0u32.to_ne_bytes();
             for name in [w!("ExcludeClipboardContentFromMonitorProcessing"), w!("CanIncludeInClipboardHistory"), w!("CanUploadToCloudClipboard")] {
                 let f = RegisterClipboardFormatW(name);
-                if f != 0 {
-                    set_bytes(f, &zero)?;
+                if f == 0 {
+                    anyhow::bail!("Could not register clipboard format: {}", windows::core::Error::from_thread());
                 }
+                set_bytes(f, &zero)?;
             }
-            Ok(())
+            set_bytes(CF_UNICODETEXT.0 as u32, bytes)?;
+            // Read while we still hold the clipboard, so no other app's write can slip in between.
+            Ok(GetClipboardSequenceNumber())
         })()
     };
+    if r.is_err() {
+        let _ = unsafe { EmptyClipboard() };
+    }
     let _ = unsafe { CloseClipboard() };
-    r?;
-    Ok(unsafe { GetClipboardSequenceNumber() })
+    r
 }
 
 /// Empties the clipboard if it still holds the copy with sequence number `seq`. Returns whether it wiped.
@@ -98,7 +114,8 @@ pub fn wipe_if_unchanged(seq: u32) -> bool {
     if !should_wipe(seq, unsafe { GetClipboardSequenceNumber() }) || open().is_err() {
         return false;
     }
-    let ok = unsafe { EmptyClipboard() }.is_ok();
+    // Check again while holding the clipboard: someone may have written between the check and open().
+    let ok = should_wipe(seq, unsafe { GetClipboardSequenceNumber() }) && unsafe { EmptyClipboard() }.is_ok();
     let _ = unsafe { CloseClipboard() };
     ok
 }
