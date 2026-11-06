@@ -86,7 +86,7 @@ pub fn copy_secret(text: &str) -> Result<u32> {
     let bytes = unsafe { std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2) };
     open()?;
     let r = unsafe {
-        (|| -> Result<u32> {
+        (|| -> Result<()> {
             EmptyClipboard()?;
             // Markers first, the text last: the text is only published once the opt-outs are in place.
             let zero = 0u32.to_ne_bytes();
@@ -98,15 +98,18 @@ pub fn copy_secret(text: &str) -> Result<u32> {
                 set_bytes(f, &zero)?;
             }
             set_bytes(CF_UNICODETEXT.0 as u32, bytes)?;
-            // Read while we still hold the clipboard, so no other app's write can slip in between.
-            Ok(GetClipboardSequenceNumber())
+            Ok(())
         })()
     };
     if r.is_err() {
         let _ = unsafe { EmptyClipboard() };
     }
     let _ = unsafe { CloseClipboard() };
-    r
+    r?;
+    // Windows bumps the sequence number again at CloseClipboard, so a value read under the lock
+    // would never match later. Another app writing in the gap right after close only means we
+    // wipe its copy instead of ours; the window is microseconds.
+    Ok(unsafe { GetClipboardSequenceNumber() })
 }
 
 /// Empties the clipboard if it still holds the copy with sequence number `seq`. Returns whether it wiped.
