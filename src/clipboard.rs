@@ -30,6 +30,25 @@ impl PendingWipe {
     }
 }
 
+/// How long to wait before retrying a wipe while another app holds the clipboard.
+const WIPE_RETRY: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WipeOutcome {
+    Wiped,
+    /// Someone else put something on the clipboard: leave it alone.
+    Changed,
+    /// The clipboard could not be opened or emptied: try again.
+    Busy,
+}
+
+impl PendingWipe {
+    /// What is still pending after a wipe attempt at `now`.
+    pub fn after(&self, outcome: WipeOutcome, now: Instant) -> Option<PendingWipe> {
+        (outcome == WipeOutcome::Busy).then(|| PendingWipe { seq: self.seq, due: now + WIPE_RETRY })
+    }
+}
+
 /// Wipe only if nobody changed the clipboard since our copy.
 pub fn should_wipe(pending_seq: u32, current_seq: u32) -> bool {
     pending_seq == current_seq
@@ -112,15 +131,24 @@ pub fn copy_secret(text: &str) -> Result<u32> {
     Ok(unsafe { GetClipboardSequenceNumber() })
 }
 
-/// Empties the clipboard if it still holds the copy with sequence number `seq`. Returns whether it wiped.
-pub fn wipe_if_unchanged(seq: u32) -> bool {
-    if !should_wipe(seq, unsafe { GetClipboardSequenceNumber() }) || open().is_err() {
-        return false;
+/// Empties the clipboard if it still holds the copy with sequence number `seq`.
+pub fn wipe_if_unchanged(seq: u32) -> WipeOutcome {
+    if !should_wipe(seq, unsafe { GetClipboardSequenceNumber() }) {
+        return WipeOutcome::Changed;
+    }
+    if open().is_err() {
+        return WipeOutcome::Busy;
     }
     // Check again while holding the clipboard: someone may have written between the check and open().
-    let ok = should_wipe(seq, unsafe { GetClipboardSequenceNumber() }) && unsafe { EmptyClipboard() }.is_ok();
+    let outcome = if !should_wipe(seq, unsafe { GetClipboardSequenceNumber() }) {
+        WipeOutcome::Changed
+    } else if unsafe { EmptyClipboard() }.is_ok() {
+        WipeOutcome::Wiped
+    } else {
+        WipeOutcome::Busy
+    };
     let _ = unsafe { CloseClipboard() };
-    ok
+    outcome
 }
 
 #[cfg(test)]
@@ -136,6 +164,17 @@ mod tests {
     }
 
     #[test]
+    fn busy_clipboard_retries_wipe() {
+        let t = Instant::now();
+        let w = PendingWipe::new(7, t);
+        let retry = w.after(WipeOutcome::Busy, t + WIPE_AFTER).expect("retry while busy");
+        assert_eq!(retry.seq, 7);
+        assert_eq!(retry.due, t + WIPE_AFTER + Duration::from_secs(1));
+        assert_eq!(w.after(WipeOutcome::Wiped, t + WIPE_AFTER), None);
+        assert_eq!(w.after(WipeOutcome::Changed, t + WIPE_AFTER), None);
+    }
+
+    #[test]
     fn wipe_skips_when_clipboard_changed() {
         assert!(should_wipe(7, 7));
         assert!(!should_wipe(7, 8));
@@ -145,7 +184,7 @@ mod tests {
     #[ignore = "touches the real clipboard"]
     fn copy_then_wipe_real_clipboard() {
         let seq = copy_secret("hunter2").unwrap();
-        assert!(wipe_if_unchanged(seq));
-        assert!(!wipe_if_unchanged(seq.wrapping_sub(1)));
+        assert_eq!(wipe_if_unchanged(seq), WipeOutcome::Wiped);
+        assert_eq!(wipe_if_unchanged(seq.wrapping_sub(1)), WipeOutcome::Changed);
     }
 }

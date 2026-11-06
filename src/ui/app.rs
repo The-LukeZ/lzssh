@@ -244,8 +244,8 @@ impl LzApp {
         if let Some(w) = self.pending_wipe {
             let now = Instant::now();
             if w.is_due(now) {
-                clipboard::wipe_if_unchanged(w.seq);
-                self.pending_wipe = None;
+                // Kept (and retried in 1 s) while another app holds the clipboard.
+                self.pending_wipe = w.after(clipboard::wipe_if_unchanged(w.seq), now);
             } else {
                 ctx.request_repaint_after((w.due - now).min(Duration::from_secs(1)));
             }

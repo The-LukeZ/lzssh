@@ -4,7 +4,7 @@ use super::app::LzApp;
 use crate::clipboard::{self, PendingWipe};
 use crate::vault::SecretKind;
 use std::ffi::c_void;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
@@ -32,6 +32,28 @@ pub struct PickerState {
     refocus: bool,
     /// Passes still needed after closing so egui tears the picker window down.
     linger: u8,
+    opened_at: Option<Instant>,
+}
+
+/// If the picker has not had focus this long after opening, Windows refused to activate it and
+/// the user's keys go to the window behind it (maybe a `sudo` prompt): close it.
+const FOCUS_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseReason {
+    Picked,
+    /// Esc or the window was closed.
+    Dismissed,
+    /// The user clicked elsewhere: focus stays where they clicked.
+    FocusLost,
+    NeverFocused,
+}
+
+impl CloseReason {
+    /// Only an explicit pick or dismiss hands focus back to the window from before the hotkey.
+    pub fn restores_focus(self) -> bool {
+        matches!(self, CloseReason::Picked | CloseReason::Dismissed)
+    }
 }
 
 impl PickerState {
@@ -41,7 +63,20 @@ impl PickerState {
             self.refocus = true;
             return;
         }
-        *self = PickerState { open: true, prev_foreground, ..Default::default() };
+        *self = PickerState { open: true, prev_foreground, opened_at: Some(Instant::now()), ..Default::default() };
+    }
+
+    /// Tracks the viewport's focus; returns why the picker must close, if it must.
+    pub fn focus_check(&mut self, focused: Option<bool>, since_open: Duration) -> Option<CloseReason> {
+        match focused {
+            Some(true) => {
+                self.was_focused = true;
+                None
+            }
+            Some(false) if self.was_focused => Some(CloseReason::FocusLost),
+            _ if !self.was_focused && since_open >= FOCUS_TIMEOUT => Some(CloseReason::NeverFocused),
+            _ => None,
+        }
     }
 
     /// The root viewport must run `ui` (even while minimized): the picker is open, or it just
@@ -51,12 +86,16 @@ impl PickerState {
     }
 }
 
-/// Closes the picker and gives focus back to the window that had it before the hotkey.
-fn close(app: &mut LzApp) {
+/// Closes the picker; on pick or dismiss gives focus back to the window that had it before the hotkey.
+fn close(app: &mut LzApp, reason: CloseReason) {
     let p = &mut app.picker;
     p.open = false;
     p.linger = 2;
-    if p.prev_foreground != 0 {
+    if reason == CloseReason::NeverFocused {
+        app.toast("The password picker could not take focus. Press the hotkey again.");
+        return;
+    }
+    if reason.restores_focus() && p.prev_foreground != 0 {
         // SAFETY: plain Win32 call; a stale HWND only makes it fail.
         let _ = unsafe { SetForegroundWindow(HWND(p.prev_foreground as *mut c_void)) };
     }
@@ -90,7 +129,7 @@ pub fn show(app: &mut LzApp, ctx: &egui::Context) {
         return;
     }
     let Some(vault) = &app.vault else {
-        close(app);
+        close(app, CloseReason::Dismissed);
         return;
     };
     let items: Vec<(Uuid, String)> = vault.list().into_iter().filter(|m| m.kind == SecretKind::Password).map(|m| (m.id, m.name)).collect();
@@ -102,7 +141,7 @@ pub fn show(app: &mut LzApp, ctx: &egui::Context) {
         .with_taskbar(false)
         .with_active(true);
     let p = &mut app.picker;
-    let (pick, dismiss) = ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("lzssh-picker"), builder, |ui, _| {
+    let (pick, reason) = ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("lzssh-picker"), builder, |ui, _| {
         let ctx = ui.ctx().clone();
         if p.frames == 1 {
             if let Some(c) = egui::ViewportCommand::center_on_screen(&ctx) {
@@ -115,13 +154,14 @@ pub fn show(app: &mut LzApp, ctx: &egui::Context) {
             p.refocus = false;
         }
         p.frames += 1;
-        let mut dismiss = false;
-        match ctx.input(|i| i.viewport().focused) {
-            Some(true) => p.was_focused = true,
-            Some(false) if p.was_focused => dismiss = true,
-            _ => {}
+        let since_open = p.opened_at.map(|t| t.elapsed()).unwrap_or_default();
+        let mut reason = p.focus_check(ctx.input(|i| i.viewport().focused), since_open);
+        if !p.was_focused && reason.is_none() {
+            ctx.request_repaint_after(Duration::from_millis(100)); // so the timeout fires
         }
-        dismiss |= ctx.input(|i| i.viewport().close_requested());
+        if ctx.input(|i| i.viewport().close_requested()) {
+            reason = Some(CloseReason::Dismissed);
+        }
         let list = filter(&items, &p.query);
         let (up, down, enter, esc) = ctx.input_mut(|i| {
             (
@@ -131,7 +171,9 @@ pub fn show(app: &mut LzApp, ctx: &egui::Context) {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
             )
         });
-        dismiss |= esc;
+        if esc {
+            reason = Some(CloseReason::Dismissed);
+        }
         if up {
             p.selected = p.selected.saturating_sub(1);
         }
@@ -166,13 +208,13 @@ pub fn show(app: &mut LzApp, ctx: &egui::Context) {
                 }
             });
         });
-        (pick, dismiss)
+        (pick, reason)
     });
     if let Some((id, name)) = &pick {
         copy(app, *id, name);
-    }
-    if pick.is_some() || dismiss {
-        close(app);
+        close(app, CloseReason::Picked);
+    } else if let Some(r) = reason {
+        close(app, r);
     }
 }
 
@@ -194,6 +236,26 @@ mod tests {
     fn filter_matches_substring_any_case() {
         let names: Vec<_> = filter(&items(), "AD").into_iter().map(|(_, n)| n).collect();
         assert_eq!(names, ["db admin"]);
+    }
+
+    #[test]
+    fn click_away_closes_without_restoring_focus() {
+        let mut p = PickerState::default();
+        p.open_at(1);
+        assert_eq!(p.focus_check(Some(true), Duration::from_millis(50)), None);
+        assert_eq!(p.focus_check(Some(false), Duration::from_millis(80)), Some(CloseReason::FocusLost));
+        assert!(!CloseReason::FocusLost.restores_focus());
+        assert!(CloseReason::Picked.restores_focus());
+        assert!(CloseReason::Dismissed.restores_focus());
+    }
+
+    #[test]
+    fn never_focused_picker_closes_after_timeout() {
+        let mut p = PickerState::default();
+        p.open_at(1);
+        assert_eq!(p.focus_check(Some(false), Duration::from_millis(500)), None);
+        assert_eq!(p.focus_check(None, Duration::from_millis(1500)), Some(CloseReason::NeverFocused));
+        assert!(!CloseReason::NeverFocused.restores_focus());
     }
 
     #[test]
