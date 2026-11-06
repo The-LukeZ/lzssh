@@ -1,6 +1,7 @@
 //! lzssh core: model, vault, connect, sync. Used by the GUI (`lzssh`) and the console helper (`lzssh-ssh`).
 #![allow(dead_code)]
 pub mod askpass;
+pub mod clipboard;
 pub mod connect;
 pub mod device;
 pub mod dpapi;

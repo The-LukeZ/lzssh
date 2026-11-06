@@ -27,7 +27,7 @@ thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 ureq = "3"
 uuid = { version = "1.29.0", features = ["v4", "serde"] }
-windows = { version = "0.62.2", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_System_Memory", "Win32_Security", "Win32_Networking_WindowsWebServices", "Security_Credentials", "Security_Cryptography", "Storage_Streams", "Foundation"] }
+windows = { version = "0.62.2", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_System_Memory", "Win32_System_DataExchange", "Win32_System_Ole", "Win32_Security", "Win32_Networking_WindowsWebServices", "Security_Credentials", "Security_Cryptography", "Storage_Streams", "Foundation"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = { version = "1.9.1", features = ["serde"] }
 
